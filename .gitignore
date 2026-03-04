@@ -1,0 +1,15 @@
+# Binary
+meimei
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Config
+.meimei.yaml
+
+# OS
+.DS_Store
