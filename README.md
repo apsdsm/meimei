@@ -3,7 +3,7 @@
 A CLI for browsing builds and deploying via AWS CodeDeploy. Features an interactive TUI for selecting deployment targets, picking builds, and monitoring deployment progress.
 
 <p align="center">
-  <img src="meimei.jpg" alt="meimei" width="400">
+  <img src="meimei.jpeg" alt="meimei" width="400">
 </p>
 
 ## Install
