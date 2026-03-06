@@ -15,7 +15,7 @@ var rootCmd = &cobra.Command{
 	Short: "Deployment and build management CLI",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for init command
-		if cmd.Name() == "init" {
+		if cmd.Name() == "init" || cmd.Name() == "version" {
 			return nil
 		}
 		cfg, err := config.Load(cfgPath)
