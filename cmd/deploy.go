@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -9,7 +11,9 @@ import (
 
 	"github.com/apsdsm/meimei/internal/awsx"
 	"github.com/apsdsm/meimei/internal/catalog"
+	"github.com/apsdsm/meimei/internal/config"
 	"github.com/apsdsm/meimei/internal/deploy"
+	"github.com/apsdsm/meimei/internal/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +41,8 @@ func init() {
 	deployCmd.Flags().String("to", "", "Target to deploy to (optional when the project declares one)")
 	deployCmd.Flags().Bool("no-follow", false, "Trigger the rollout and return without waiting")
 	deployCmd.Flags().Bool("dry-run", false, "Print what would be promoted, and change nothing")
+	deployCmd.Flags().Bool("skip-image-check", false,
+		"Promote without asking the registry whether the images are there")
 	deployCmd.Flags().Duration("timeout", deploy.DefaultTimeout, "How long to follow a rollout before giving up")
 	rootCmd.AddCommand(deployCmd)
 }
@@ -55,6 +61,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	to, _ := cmd.Flags().GetString("to")
 	noFollow, _ := cmd.Flags().GetBool("no-follow")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	skipCheck, _ := cmd.Flags().GetBool("skip-image-check")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 
 	target, err := cfg.ResolveTarget(to)
@@ -101,6 +108,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	var order []string
 	byFamily := map[string]*work{}
+	var refs []registry.Ref
 
 	for _, name := range services {
 		task, ok := packing.TaskFor(name)
@@ -114,10 +122,18 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			byFamily[task.Service] = w
 			order = append(order, task.Service)
 		}
+		repo := cfg.Project.Name + "-" + name
+		refs = append(refs, registry.Ref{Service: name, Repo: repo, Tag: tag})
 		w.swaps = append(w.swaps, deploy.Swap{
 			Container: name,
-			Image:     cfg.Registry.ImageURI(cfg.Project.Name+"-"+name, tag),
+			Image:     cfg.Registry.ImageURI(repo, tag),
 		})
+	}
+
+	if skipCheck {
+		fmt.Fprintf(os.Stderr, "\nWARNING: --skip-image-check — promoting without checking the registry\n")
+	} else if err := preflight(ctx, cfg, refs); err != nil {
+		return err
 	}
 
 	for _, family := range order {
@@ -137,6 +153,16 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "  %s  %s → %s\n", s.Container, shortImage(was), shortImage(s.Image))
 			}
 		}
+		// A "from" side still on the placeholder means the registered revision is the
+		// one Terraform wrote and no real image was ever promoted onto it — Terraform
+		// owns the task shape and never the image, so it seeds a tag it cannot fill.
+		// Worth saying, because it is exactly the state where a deploy is most needed
+		// and where the newest revision must not be pointed at directly.
+		if fromPlaceholder(current, w.swaps) {
+			fmt.Fprintf(os.Stderr, "  first real image since a Terraform apply (was on the %s placeholder)\n",
+				placeholderTag)
+		}
+
 		// Task-mates that nobody asked to change still restart: a revision is
 		// registered for the whole task and ECS replaces the task, not one
 		// container. Worth saying before it happens rather than after.
@@ -281,4 +307,148 @@ func shortImage(image string) string {
 		return image[i+1:]
 	}
 	return image
+}
+
+// preflight asks the registry about every image this deploy would promote, and
+// refuses the deploy if any of them cannot be promoted safely.
+//
+// Before any mutation, deliberately: no task definition registered, no service
+// updated, nothing to clean up afterwards. A dry run checks too — a dry run
+// that reports a promotion which cannot happen is worse than none, because
+// gaining confidence is the only reason to run one.
+//
+// The registry is usually a different account from the cluster, so this opens
+// its own session. Failing to open it is an Unknown rather than a refusal: a
+// missing read permission must not be able to make a working deploy impossible.
+func preflight(ctx context.Context, cfg *config.Config, refs []registry.Ref) error {
+	sess, err := awsx.Open(ctx, cfg.Registry.Profile, cfg.Registry.Region, cfg.Registry.Account)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nWARNING: cannot reach the registry to check these images (%v)\n", err)
+		fmt.Fprintf(os.Stderr, "         continuing without the check\n")
+
+		return nil
+	}
+
+	reg := registry.New(sess)
+	where := fmt.Sprintf("%s, %s", cfg.Registry.Account, cfg.Registry.Region)
+
+	warnings, problem := reviewFindings(
+		reg.Preflight(ctx, refs),
+		where,
+		func(repo string) string { return suggestTag(ctx, reg, repo) },
+	)
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "\nWARNING: %s\n", w)
+	}
+
+	return problem
+}
+
+// reviewFindings decides whether a deploy may go ahead, and says why not.
+//
+// Pure, and the rendering is here rather than at the call site, because the
+// message IS the feature: an operator who forgot to push needs to be told what
+// is missing, where it was looked for, and what to run. `suggest` is passed in
+// so that naming an alternative tag stays a registry call the caller owns.
+func reviewFindings(
+	findings []registry.Finding,
+	where string,
+	suggest func(repo string) string,
+) (warnings []string, err error) {
+	var missing, ambiguous []registry.Finding
+
+	for _, f := range findings {
+		switch f.Status {
+		case registry.Missing:
+			missing = append(missing, f)
+		case registry.Ambiguous:
+			ambiguous = append(ambiguous, f)
+		case registry.Unknown:
+			warnings = append(warnings, fmt.Sprintf("could not check %s:%s — %s", f.Repo, f.Tag, f.Why))
+		}
+	}
+
+	if len(missing) == 0 && len(ambiguous) == 0 {
+		return warnings, nil
+	}
+
+	var b strings.Builder
+
+	if len(missing) > 0 {
+		fmt.Fprintf(&b, "%s not in ECR (%s):\n", plural(len(missing), "image is", "images are"), where)
+		for _, f := range missing {
+			fmt.Fprintf(&b, "\n  %s:%s", f.Repo, f.Tag)
+			if f.Why != "" {
+				fmt.Fprintf(&b, "\n      %s", f.Why)
+			}
+		}
+
+		services := make([]string, 0, len(missing))
+		for _, f := range missing {
+			services = append(services, f.Service)
+		}
+		fmt.Fprintf(&b, "\n\n  build and push first:\n      meimei build %s --push\n",
+			strings.Join(services, " "))
+
+		if alt := suggest(missing[0].Repo); alt != "" {
+			fmt.Fprintf(&b, "\n  or promote a tag that is there:\n      --tag %s\n", alt)
+		}
+	}
+
+	for _, f := range ambiguous {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "%s:%s is one of several tags on the same image (also: %s)\n",
+			f.Repo, f.Tag, strings.Join(f.Aliases, ", "))
+		b.WriteString("\n  meimei pushes one tag per build, so it cannot tell which of those names this\n" +
+			"  image was built as — and the one it was built as is what the code inside it\n" +
+			"  reports about itself. Promote the tag the build produced, or pass\n" +
+			"  --skip-image-check if you know this is it.\n")
+	}
+
+	b.WriteString("\nnothing was changed.")
+
+	return warnings, errors.New(b.String())
+}
+
+// suggestTag names a tag that does exist, for somebody who just asked for one
+// that does not. A hint, so failing to fetch it is not worth reporting on top of
+// the failure it is decorating.
+func suggestTag(ctx context.Context, reg *registry.ECR, repo string) string {
+	recent, err := reg.Recent(ctx, repo, 1)
+	if err != nil || len(recent) == 0 || len(recent[0].Tags) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("%s      (pushed %s)",
+		recent[0].Tags[0], recent[0].PushedAt.Local().Format("2006-01-02 15:04"))
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// placeholderTag is the image tag Terraform seeds into a task definition it
+// cannot fill: it owns the shape of a task and never the image in it, so the
+// first apply for a service names something unpullable on purpose.
+//
+// A convention rather than a fact meimei can discover, and it is the same one in
+// every cluster we run. A tag it does not recognise is simply not reported on.
+const placeholderTag = "bootstrap"
+
+// fromPlaceholder reports whether any container being changed is currently on
+// the placeholder.
+func fromPlaceholder(current map[string]string, swaps []deploy.Swap) bool {
+	for _, s := range swaps {
+		if strings.HasSuffix(current[s.Container], ":"+placeholderTag) {
+			return true
+		}
+	}
+
+	return false
 }

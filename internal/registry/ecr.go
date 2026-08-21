@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -33,33 +35,85 @@ func (e *ECR) Host() string {
 	return e.account + ".dkr.ecr." + e.region + ".amazonaws.com"
 }
 
-// Exists reports whether a tag is already in a repository.
+// Image is what the registry holds under one tag.
+type Image struct {
+	Digest   string
+	PushedAt time.Time
+
+	// Tags is EVERY tag on this image, not just the one that was asked about —
+	// which is how a caller can tell a tag that uniquely names a build from one
+	// of several names for the same bytes.
+	Tags []string
+}
+
+// OtherTags are this image's tags apart from the one named, in a stable order.
+func (i Image) OtherTags(tag string) []string {
+	var out []string
+	for _, t := range i.Tags {
+		if t != tag {
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+
+	return out
+}
+
+// Describe reports what the registry holds under a tag, or nil when there is
+// nothing there.
 //
-// This is what makes a re-run idempotent instead of an error: repositories are
-// created with immutable tags, so pushing over an existing tag is refused by
-// the registry. A build that has already been pushed is finished, not failed.
-func (e *ECR) Exists(ctx context.Context, repo, tag string) (bool, error) {
-	_, err := e.client.DescribeImages(ctx, &ecr.DescribeImagesInput{
+// A missing tag is an answer, not a fault: it is what makes a re-push idempotent
+// (repositories here have immutable tags, so pushing over an existing one is
+// refused) and it is what a deploy preflight is asking about.
+func (e *ECR) Describe(ctx context.Context, repo, tag string) (*Image, error) {
+	out, err := e.client.DescribeImages(ctx, &ecr.DescribeImagesInput{
 		RepositoryName: aws.String(repo),
 		ImageIds:       []ecrtypes.ImageIdentifier{{ImageTag: aws.String(tag)}},
 	})
 	if err == nil {
-		return true, nil
+		if len(out.ImageDetails) == 0 {
+			return nil, nil
+		}
+		img := imageFrom(out.ImageDetails[0])
+
+		return &img, nil
 	}
 
-	// "no such tag" and "no such repository" are both answers rather than
-	// faults — the first means go ahead, the second means the repository has
-	// not been created yet, which is Terraform's job and worth saying plainly.
 	var notFound *ecrtypes.ImageNotFoundException
 	if errors.As(err, &notFound) {
-		return false, nil
+		return nil, nil
 	}
+	// A repository that does not exist is a different kind of missing, and
+	// saying so saves somebody looking for a build that could never have been
+	// pushed: the repository is Terraform's to create, not meimei's.
 	var noRepo *ecrtypes.RepositoryNotFoundException
 	if errors.As(err, &noRepo) {
-		return false, fmt.Errorf("repository %q does not exist in account %s (%s) — "+
+		return nil, fmt.Errorf("repository %q does not exist in account %s (%s) — "+
 			"it is created by Terraform, not by meimei", repo, e.account, e.region)
 	}
-	return false, fmt.Errorf("checking %s:%s: %w", repo, tag, err)
+
+	return nil, fmt.Errorf("checking %s:%s: %w", repo, tag, err)
+}
+
+func imageFrom(d ecrtypes.ImageDetail) Image {
+	return Image{
+		Digest:   aws.ToString(d.ImageDigest),
+		PushedAt: aws.ToTime(d.ImagePushedAt),
+		Tags:     d.ImageTags,
+	}
+}
+
+// Exists reports whether a tag is already in a repository.
+//
+// This is what makes a re-run idempotent instead of an error: a build that has
+// already been pushed is finished, not failed.
+func (e *ECR) Exists(ctx context.Context, repo, tag string) (bool, error) {
+	img, err := e.Describe(ctx, repo, tag)
+	if err != nil {
+		return false, err
+	}
+
+	return img != nil, nil
 }
 
 // Auth is a docker registry credential.

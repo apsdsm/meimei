@@ -1,13 +1,12 @@
-# Gap: `deploy` rolls a tag without checking the image exists
+# `deploy` checks the registry before it promotes
 
-**Status:** not implemented. Observed against a live cluster on 2026-08-20, twice.
+**Status:** implemented. The gap it closes was observed against a live cluster on 2026-08-20, twice.
 
-`meimei deploy` registers a task definition and rolls a service without ever asking the registry
-whether the image it names is there. When it is not, the failure arrives about two minutes later as a
-task that will not start, and the message names neither the tag nor the cause in terms a reader
-connects to "you forgot to build".
+`meimei deploy` asks the registry whether every image it is about to promote is there, and refuses
+the whole deploy before registering anything if any of them is not. It also refuses a tag it cannot
+tell apart from another name for the same image.
 
-## What it looks like
+## What it used to look like
 
 ```
 $ meimei deploy chatbot
@@ -30,7 +29,7 @@ chatbot: CannotPullImageManifestError: Error response from daemon:
            manifest unknown: Requested image not found
 ```
 
-## Why it happens, and why it will keep happening
+## Why it happened, and why it kept happening
 
 Three design choices intersect:
 
@@ -48,7 +47,7 @@ It is not hypothetical. Both occurrences in one afternoon were the same shape: w
 not pushed, `meimei deploy` run, two minutes of a rollout that could never succeed. In both cases
 the previous revision kept serving, so nothing broke; the cost was time and a confusing error.
 
-## The fix
+## The fix, as proposed
 
 **Before registering anything, ask the registry whether every image to be promoted exists.** If any
 does not, print what is missing and what to run, and change nothing.
@@ -110,7 +109,58 @@ feature. `internal/registry/ecr.go` is where it lives.
 - `DescribeImages` failing for a *permission* reason → treated as unknown, not as absent, so a
   read-permission gap cannot block a deploy that would otherwise work
 
-## An adjacent gap, same root
+## What was built
+
+The sections above are the proposal as written; what landed matches them, with two differences noted
+at the end. What it actually prints:
+
+```
+Error: 2 images are not in ECR (111122223333, ap-northeast-1):
+
+  acme-api:rel-doesnotexist99
+  acme-sysadmin-web-spa:rel-doesnotexist99
+
+  build and push first:
+      meimei build api sysadmin-web-spa --push
+
+  or promote a tag that is there:
+      --tag rel-4a1b2c3d5e6f      (pushed 2026-08-20 05:37)
+
+nothing was changed.
+```
+
+```
+Error: acme-api:acme.20260820.001 is one of several tags on the same image (also: bootstrap)
+
+  meimei pushes one tag per build, so it cannot tell which of those names this
+  image was built as — and the one it was built as is what the code inside it
+  reports about itself. Promote the tag the build produced, or pass
+  --skip-image-check if you know this is it.
+
+nothing was changed.
+```
+
+| File | What it holds |
+|---|---|
+| `internal/registry/ecr.go` | `Describe` returns the image under a tag (digest, push time, and **every** tag on it) or nil for absent; `Exists` is now a thin read of it |
+| `internal/registry/preflight.go` | `Preflight` over a set of refs, and a pure `classify` that turns one registry answer into Present / Missing / Ambiguous / Unknown |
+| `cmd/deploy.go` | `--skip-image-check`, the call before any mutation, and `reviewFindings` — pure, so the message is asserted rather than eyeballed |
+
+**Difference 1: it also refuses an ambiguously-tagged image.** A digest can carry several tags even
+though tags are immutable, which is what happened on 2026-08-20: one image pushed as both
+`bootstrap` and a real tag, with the task definition naming the placeholder. meimei pushes exactly
+one tag per build, so a second tag arrived from somewhere else — and since the tag an image was built
+as is baked into it (`MEIMEI_BUILD_ID`) and is what the running code reports about itself, a task
+definition naming a different one describes the same bytes by a name the code inside does not use.
+The check is free: the tag list is in the same `DescribeImages` response as existence.
+
+**Difference 2: the test for "no AWS mutation calls" is structural, not a fake.** The preflight runs
+before the promote loop, which is the only thing in `runDeploy` that mutates, and `--dry-run` is
+handled inside that loop — so a dry run checks too, and a refusal cannot have registered anything.
+There is no AWS fake in this repo to assert against, and introducing one to prove a statement about
+line order would be the more fragile of the two.
+
+## The adjacent gap, also built
 
 `deploy`'s output line reads:
 
@@ -123,9 +173,16 @@ Terraform owns the shape and never the image. Seeing it as the "from" side means
 registered revision is Terraform's, and no real image was ever promoted onto it.**
 
 That is worth saying out loud, because it is precisely the state in which a deploy is most necessary
-and in which the newest revision must not be pointed at directly. A one-line note in the output —
-*"previous revision carries the :bootstrap placeholder, so this is the first real image since a
-Terraform apply"* — turns an odd-looking line into information.
+and in which the newest revision must not be pointed at directly. The output now says so:
+
+```
+  api  acme-api:bootstrap → acme-api:rel-9f2c1a7b0e44
+  first real image since a Terraform apply (was on the bootstrap placeholder)
+```
+
+The tag is a convention rather than something meimei can discover, and it is the same one in every
+cluster we run. A placeholder by another name is simply not reported on — guessing would be worse
+than silence.
 
 ## What the tool already gets right, and should keep
 
