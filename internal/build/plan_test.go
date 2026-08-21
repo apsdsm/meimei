@@ -293,6 +293,36 @@ func TestOCILabels(t *testing.T) {
 	}
 }
 
+// Every build is told the tag it is being built as, so an app can report which
+// build it is. A label cannot do this job: the code inside an image cannot read
+// its own annotations.
+func TestResolveHandsTheTagToTheBuild(t *testing.T) {
+	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
+
+	plans, err := Resolve(cat, opts("api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(plans[0].BuildArgs, " "), "MEIMEI_BUILD_ID=sha-abc1234"; got != want {
+		t.Errorf("BuildArgs = %q, want %q", got, want)
+	}
+
+	// It follows the tag, so a labelled build reports the label rather than the
+	// commit — the same string the image is tagged with, whichever it is.
+	o := opts("api")
+	o.Label = "rel.001"
+	plans, err = Resolve(cat, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(plans[0].BuildArgs, " "), "MEIMEI_BUILD_ID=rel.001"; got != want {
+		t.Errorf("BuildArgs = %q, want %q", got, want)
+	}
+	if plans[0].BuildArgs[0] != BuildIDArg+"="+plans[0].Tag {
+		t.Errorf("BuildArgs = %v, want it to carry Tag %q", plans[0].BuildArgs, plans[0].Tag)
+	}
+}
+
 // A local build targets the machine doing the building, whatever the config
 // says — an image for another architecture cannot be run here.
 func TestLocalBuildIgnoresServicePlatform(t *testing.T) {

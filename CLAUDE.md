@@ -54,6 +54,22 @@ A corollary that settles the push default: **nothing leaves the machine unless a
 is named.** `meimei build` is local; pushing will require `--push` (or a `--deploy-to`, which
 implies it). So there is no default to flip when push lands, and no accidental push.
 
+## Every build is told its own tag
+
+`--build-arg MEIMEI_BUILD_ID=<tag>` goes to every build, carrying the same string the image is
+tagged with. It is the OCI `version` label's fact handed TO the build instead of attached to the
+result: a label describes an image to whoever inspects it from outside and cannot be read by the
+code inside it, so an app that wants to report which build it is must be told while it is being
+built. A value the container could set at start-up would describe the deployment rather than
+identify the artifact.
+
+The case it was added for: a browser SPA bakes it into its bundle and sends it back, so a server can
+tell a client running a retired build from one running the deployed build.
+
+Passed to every service unconditionally, like the labels. A Dockerfile that does not declare the
+`ARG` ignores it, and buildx warning about an unused build argument is not a failure — success is
+the exit code.
+
 ## Where a fact lives (read before adding a config field)
 
 `.meimei.toml` declares only what is true of the **repository**, the same for every
