@@ -6,11 +6,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is pre-release while v2 is being built: the command surface is still
-// moving, and no tag is cut until build and deploy have landed. Kept distinct
-// from the 0.1.0 installed at /usr/local/bin so `meimei version` says at a
-// glance which one you are running.
-const Version = "2.0.0-dev"
+// Version is what `meimei version` prints, and it tracks the git tag rather
+// than leading it: the installer resolves `@latest` from tags, so a const ahead
+// of the tag describes a build nobody can install.
+//
+// 1.x, not 2.x, although the rewrite is called v2 everywhere else. A module
+// whose path has no /v2 suffix is one Go ignores v2+ tags for, so a v2.0.0 tag
+// would leave `go install github.com/apsdsm/meimei@latest` on v0.1.0 — and
+// adding the suffix to a CLI nobody imports would be ceremony with a cost. The
+// v2 name stays what it has always been: the name of the rewrite.
+const Version = "1.0.0"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
