@@ -9,7 +9,7 @@ meimei
 *~
 
 # Config
-.meimei.yaml
+.meimei.toml
 
 # OS
 .DS_Store
