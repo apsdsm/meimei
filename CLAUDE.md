@@ -99,7 +99,15 @@ go test ./...           # Run tests
 
 ## Versioning
 
-The version is defined as a `const` in `cmd/version.go`. When bumping the version:
+The version is a `const` in `cmd/version.go`, and the tag is what the installer resolves — so the
+const tracks the tag rather than leading it. When bumping:
+
 1. Update the `Version` constant in `cmd/version.go`
-2. Create a git tag matching the version (e.g. `git tag v0.1.0`)
-3. Push the tag (e.g. `git push origin v0.1.0`)
+2. Create a git tag matching the version (e.g. `git tag v1.0.0`)
+3. Push the tag (e.g. `git push origin v1.0.0`)
+
+**Stay on 1.x.** Go ignores `v2+` tags for a module whose path has no `/v2` suffix, so a `v2.0.0` tag
+would leave `go install github.com/apsdsm/meimei@latest` on the newest 1.x — silently, with no error
+to read. Going to 2.x means renaming the module and every internal import, and changing the install
+command, for a CLI nothing imports as a library. The "v2" in the branch name and in this file is the
+name of the rewrite, not a module major version.
