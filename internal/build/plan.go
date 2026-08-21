@@ -53,6 +53,10 @@ type Plan struct {
 	// resolutions of the same inputs produce the same command.
 	Labels []string
 
+	// BuildArgs are docker build arguments as "key=value", stable-ordered for
+	// the same reason Labels are.
+	BuildArgs []string
+
 	Output Output
 
 	// Route is who uploads the image when Output is OutputPush. Chosen by the
@@ -149,6 +153,7 @@ func Resolve(cat *catalog.Catalog, opts Options) ([]Plan, error) {
 	}
 
 	labels := ociLabels(cat, opts, tag)
+	args := buildArgs(tag)
 
 	plans := make([]Plan, 0, len(entries))
 	for _, e := range entries {
@@ -161,6 +166,7 @@ func Resolve(cat *catalog.Catalog, opts Options) ([]Plan, error) {
 			Dockerfile: e.Dockerfile,
 			Context:    e.Context,
 			Labels:     labels,
+			BuildArgs:  args,
 			Output:     opts.Output,
 			Route:      opts.Route,
 		})
@@ -180,6 +186,31 @@ func platformFor(e catalog.Entry, opts Options) string {
 		return e.Service.Platform
 	}
 	return opts.Platform
+}
+
+// BuildIDArg is the build argument every image is given, carrying the tag the
+// image is being built as.
+//
+// The same fact as org.opencontainers.image.version, handed TO the build rather
+// than attached to the result. A label describes an image to whoever inspects
+// it from outside and cannot be read by the code inside it, so an app that
+// wants to report which build it is has to be told while it is being built — a
+// value the container could set at start-up would be a fact about the
+// deployment instead, and would no longer identify the artifact.
+//
+// The case it was added for: a browser SPA bakes this into its bundle and sends
+// it back, so a server can tell a client running a retired build from one
+// running the deployed build.
+const BuildIDArg = "MEIMEI_BUILD_ID"
+
+// buildArgs are the arguments handed to every build.
+//
+// Declared for every service rather than opted into per service, like the
+// labels: a Dockerfile that does not name the ARG ignores it, and buildx
+// warning about an unused build argument is not a failure — success is the exit
+// code, never the progress output.
+func buildArgs(tag string) []string {
+	return []string{BuildIDArg + "=" + tag}
 }
 
 // ociLabels records where an image came from. They are attached to every build

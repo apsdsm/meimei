@@ -24,7 +24,8 @@ func samplePlan() Plan {
 			"org.opencontainers.image.revision=abc1234",
 			"org.opencontainers.image.created=2026-08-14T05:42:00Z",
 		},
-		Output: OutputLoad,
+		BuildArgs: []string{"MEIMEI_BUILD_ID=sha-abc1234"},
+		Output:    OutputLoad,
 	}
 }
 
@@ -36,6 +37,7 @@ func TestArgs(t *testing.T) {
 		"--file /repo/services/api/Dockerfile " +
 		"--label org.opencontainers.image.revision=abc1234 " +
 		"--label org.opencontainers.image.created=2026-08-14T05:42:00Z " +
+		"--build-arg MEIMEI_BUILD_ID=sha-abc1234 " +
 		"--tag acme-api:sha-abc1234 " +
 		"--load " +
 		"/repo"

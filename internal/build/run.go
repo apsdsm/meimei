@@ -36,6 +36,9 @@ func (p Plan) Args() []string {
 	for _, l := range p.Labels {
 		args = append(args, "--label", l)
 	}
+	for _, a := range p.BuildArgs {
+		args = append(args, "--build-arg", a)
+	}
 	args = append(args, "--tag", p.Image)
 
 	// A push over the CLI route still builds with --load: the image goes to the
