@@ -43,10 +43,10 @@ func (s Status) String() string {
 	}
 }
 
-// Entry is one service, as the catalog found it.
+// Entry is one image, as the catalog found it.
 type Entry struct {
-	Service config.Image
-	Status  Status
+	Image  config.Image
+	Status Status
 
 	// Repository is the image repository this service builds into.
 	Repository string
@@ -85,17 +85,17 @@ func Load(cfg *config.Config, label string) *Catalog {
 	tag := git.Tag(label)
 
 	entries := make([]Entry, 0, len(cfg.Images))
-	for _, svc := range cfg.Images {
+	for _, img := range cfg.Images {
 		e := Entry{
-			Service:    svc,
-			Repository: cfg.Repository(svc),
+			Image:      img,
+			Repository: cfg.Repository(img),
 			Tag:        tag,
-			Dockerfile: cfg.AbsDockerfile(svc),
-			Context:    cfg.AbsContext(svc),
+			Dockerfile: cfg.AbsDockerfile(img),
+			Context:    cfg.AbsContext(img),
 		}
 
 		switch {
-		case svc.Disabled:
+		case img.Disabled:
 			e.Status = Disabled
 		default:
 			e.Status, e.Problem, e.Info = inspect(e.Dockerfile)
@@ -145,7 +145,7 @@ func (c *Catalog) Groups() []Group {
 	var order []string
 	byGroup := map[string][]Entry{}
 	for _, e := range c.Entries {
-		g := e.Service.Group
+		g := e.Image.Group
 		if _, ok := byGroup[g]; !ok {
 			order = append(order, g)
 		}
@@ -174,7 +174,7 @@ type Group struct {
 // Find returns the entry for a service by name.
 func (c *Catalog) Find(name string) (Entry, bool) {
 	for _, e := range c.Entries {
-		if e.Service.Name == name {
+		if e.Image.Name == name {
 			return e, true
 		}
 	}

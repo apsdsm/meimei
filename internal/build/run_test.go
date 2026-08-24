@@ -13,7 +13,7 @@ import (
 
 func samplePlan() Plan {
 	return Plan{
-		Service:    "api",
+		Name:       "api",
 		Image:      "acme-api:sha-abc1234",
 		Repository: "acme-api",
 		Tag:        "sha-abc1234",

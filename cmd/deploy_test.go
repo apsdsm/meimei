@@ -17,7 +17,7 @@ func noSuggestion(string) string { return "" }
 
 func finding(service, tag string, status registry.Status) registry.Finding {
 	return registry.Finding{
-		Ref:    registry.Ref{Service: service, Repo: "acme-" + service, Tag: tag},
+		Ref:    registry.Ref{Name: service, Repo: "acme-" + service, Tag: tag},
 		Status: status,
 	}
 }

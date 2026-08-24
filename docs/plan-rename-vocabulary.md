@@ -1,7 +1,7 @@
 # Rename plan: meimei's nouns to AWS's
 
 **Status:** in progress. Written 2026-08-24 from the finding in
-[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0-3 are done** — the next one is step 4.
+[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0-4 are done** — the next one is step 5, the version gate.
 
 This is a rename plus a version gate. It fixes no bug — including the silent-overwrite bug in
 `byContainer`, which stays exactly as it is. Steps 1-5 change no behaviour at all; step 6 changes
@@ -54,8 +54,8 @@ Everything else in the file is untouched: `[project]`, `[registry]`, and every f
 | `Packing` | `Packing` — unchanged | " |
 | `catalog.Entry.Service` | `catalog.Entry.Image` | `internal/catalog` |
 | `build.Options.Services` | `build.Options.Images` | `internal/build` |
-| `build.Plan.Service` | `build.Plan.Image` | " |
-| `registry.Ref.Service` | `registry.Ref.Image` | `internal/registry` |
+| `build.Plan.Service` | `build.Plan.Name` | " — **not** `Image`: `Plan.Image` already holds the full `repository:tag` reference |
+| `registry.Ref.Service` | `registry.Ref.Name` | `internal/registry` — same reason: a `Ref` is name + repo + tag, so `Image` would read as the whole reference |
 
 `deploy.Task` becoming `deploy.Service` is only possible because `config.Service` is vacating the
 name. That is the whole point of doing them in one plan: the struct whose comment has to talk the
@@ -193,7 +193,7 @@ updates [config-reference.md](config-reference.md) in the same commit** — step
 | 1 ✓ | `config.Service` → `config.Image`, `[[services]]` → `[[images]]`, `Config.Services` → `Config.Images`, the three methods taking one, and the `services[%d] has no name` / `duplicate service %q` / `service %q: …` validation messages. Test fixtures with it. **Reference doc: the `[[images]]` table.** |
 | 2 ✓ | `Target`'s doc comments only: say that `cluster` is the ECS cluster, that nothing here names the ECS service, and that the next change adds it. No identifier moves. |
 | 3 ✓ | `deploy.Task` → `deploy.Service`, `Tasks` → `Services`, `TaskFor` → `ServiceFor`, `TaskNamed` → `ServiceNamed`, and split `Service` → `Name` + `Family` with both assigned from `svc.ServiceName`. |
-| 4 | The leaf renames: `catalog.Entry.Service`, `build.Options.Services`, `build.Plan.Service`, `registry.Ref.Service`. |
+| 4 ✓ | The leaf renames: `catalog.Entry.Service`, `build.Options.Services`, `build.Plan.Service`, `registry.Ref.Service`. |
 | 5 | The version gate: `ConfigVersion = 2` const, `Config.Version int` with `toml:"version"`, and the check in `LoadFrom` **before** `Validate`. Three tests — v2 loads, a file with no `version` is refused naming the two edits, `version = 3` is refused saying to upgrade. Every test fixture in the repo gains `version = 2`. **Reference doc: the `version` section and the two refusal messages.** |
 | 6 | The user-facing sweep — help text, error messages, `ls --json`'s `"services"` key, and the `(s)` plurals — against the canonical list in [terms.md](terms.md). Every string is listed in "Step 6 in full" below. |
 | 7 | Docs and release: `CLAUDE.md` (lines 44-48, 76-86, `Service.Group` → `Image.Group`, a pointer to `config-reference.md` from the "Where a fact lives" section, and its own prose swept against `terms.md` — it says "service" for an image throughout), `gap-vocabulary.md` (what was decided, and that `targets` is staying, with the reason), `gap-many-environments-one-cluster.md` (its "rename `[[services]]` … and the hole names itself" line is now done), `index.md`, `terms.md` if step 6 turned up a concept it does not list, and `config-reference.md`'s status table flipped to say version 2 is what the tool reads. Bump `cmd/version.go` to `1.1.0`, tag, push. `README.md` needs nothing — already flagged stale on this branch. |

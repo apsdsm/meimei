@@ -8,7 +8,7 @@ import (
 )
 
 func ref() Ref {
-	return Ref{Service: "api", Repo: "acme-api", Tag: "rel-9f2c1a7b0e44"}
+	return Ref{Name: "api", Repo: "acme-api", Tag: "rel-9f2c1a7b0e44"}
 }
 
 func TestClassifyPresentWhenTheTagIsTheOnlyOne(t *testing.T) {

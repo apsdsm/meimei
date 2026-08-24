@@ -59,7 +59,7 @@ func TestLoadBuildable(t *testing.T) {
 	}
 	for _, e := range cat.Entries {
 		if e.Status != Buildable {
-			t.Errorf("%s: status = %v (%s), want buildable", e.Service.Name, e.Status, e.Problem)
+			t.Errorf("%s: status = %v (%s), want buildable", e.Image.Name, e.Status, e.Problem)
 		}
 	}
 
@@ -204,8 +204,8 @@ group = "api"
 	if len(groups[0].Entries) != 2 {
 		t.Errorf("group api has %d entries, want 2", len(groups[0].Entries))
 	}
-	if groups[0].Entries[1].Service.Name != "process-runner" {
-		t.Errorf("second entry in api = %q, want process-runner", groups[0].Entries[1].Service.Name)
+	if groups[0].Entries[1].Image.Name != "process-runner" {
+		t.Errorf("second entry in api = %q, want process-runner", groups[0].Entries[1].Image.Name)
 	}
 }
 

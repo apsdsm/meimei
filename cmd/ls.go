@@ -80,7 +80,7 @@ func emitText(cat *catalog.Catalog) {
 
 	for _, e := range cat.Entries {
 		if e.Problem != "" {
-			fmt.Printf("✕ %s: %s\n", e.Service.Name, e.Problem)
+			fmt.Printf("✕ %s: %s\n", e.Image.Name, e.Problem)
 		}
 	}
 }
@@ -105,7 +105,7 @@ func renderTable(cat *catalog.Catalog) string {
 		fmt.Fprintf(w, "%s\t\t\t\n", name)
 		for _, e := range group.Entries {
 			fmt.Fprintf(w, "  %s %s\t%s\t%s\t%s\n",
-				glyph(e.Status), e.Service.Name, detail(e), image(cat, e), e.Service.Dockerfile)
+				glyph(e.Status), e.Image.Name, detail(e), image(cat, e), e.Image.Dockerfile)
 		}
 		fmt.Fprint(w, "\t\t\t\n")
 	}
@@ -195,14 +195,14 @@ func emitJSON(cat *catalog.Catalog) error {
 	}
 	for _, e := range cat.Entries {
 		je := jsonEntry{
-			Name:       e.Service.Name,
+			Name:       e.Image.Name,
 			Status:     e.Status.String(),
 			Repository: e.Repository,
 			Tag:        e.Tag,
-			Group:      e.Service.Group,
-			Dockerfile: e.Service.Dockerfile,
-			Context:    e.Service.Context,
-			Platform:   e.Service.Platform,
+			Group:      e.Image.Group,
+			Dockerfile: e.Image.Dockerfile,
+			Context:    e.Image.Context,
+			Platform:   e.Image.Platform,
 			Base:       e.Info.Base(),
 			Stages:     len(e.Info.Stages),
 			Expose:     e.Info.Expose,

@@ -125,7 +125,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			order = append(order, svc.Family)
 		}
 		repo := cfg.Project.Name + "-" + name
-		refs = append(refs, registry.Ref{Service: name, Repo: repo, Tag: tag})
+		refs = append(refs, registry.Ref{Name: name, Repo: repo, Tag: tag})
 		w.swaps = append(w.swaps, deploy.Swap{
 			Container: name,
 			Image:     cfg.Registry.ImageURI(repo, tag),
@@ -235,7 +235,7 @@ func selectServices(cat *catalog.Catalog, names []string, all bool) ([]string, e
 		var out []string
 		for _, e := range cat.Entries {
 			if e.Status != catalog.Disabled {
-				out = append(out, e.Service.Name)
+				out = append(out, e.Image.Name)
 			}
 		}
 		if len(out) == 0 {
@@ -260,7 +260,7 @@ func selectServices(cat *catalog.Catalog, names []string, all bool) ([]string, e
 	if len(unknown) > 0 {
 		var known []string
 		for _, e := range cat.Entries {
-			known = append(known, e.Service.Name)
+			known = append(known, e.Image.Name)
 		}
 		sort.Strings(known)
 		return nil, fmt.Errorf("unknown: %s (known: %s)",
@@ -387,7 +387,7 @@ func reviewFindings(
 
 		services := make([]string, 0, len(missing))
 		for _, f := range missing {
-			services = append(services, f.Service)
+			services = append(services, f.Name)
 		}
 		fmt.Fprintf(&b, "\n\n  build and push first:\n      meimei build %s --push\n",
 			strings.Join(services, " "))
