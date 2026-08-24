@@ -1,13 +1,13 @@
 // Package build turns a catalog into builds.
 //
-// It is split in two on purpose. Resolving WHAT to build — which services, what
+// It is split in two on purpose. Resolving WHAT to build — which images, what
 // image name, which tag, which platform, which labels — is a pure function over
 // the catalog and the flags, with no I/O and no side effects. Running the build
 // is separate, and is the only part that touches docker.
 //
 // The split is what makes --dry-run free, and it puts the rules that have
 // actually caused trouble (the reserved sha- prefix, label validity, which
-// services a name selects) under test instead of inside a shell script.
+// images a name selects) under test instead of inside a shell script.
 package build
 
 import (
@@ -70,11 +70,11 @@ type Options struct {
 	// Images names what to build. Empty with All set means everything.
 	Images []string
 
-	// All selects every buildable service.
+	// All selects every buildable image.
 	//
-	// A flag rather than a reserved service name: "all" as a magic positional
+	// A flag rather than a reserved image name: "all" as a magic positional
 	// value is one naming collision away from ambiguity, and it reads the same
-	// as a service name at the call site while meaning something entirely
+	// as an image name at the call site while meaning something entirely
 	// different.
 	All bool
 
@@ -128,10 +128,10 @@ func ValidateLabel(label string) error {
 	return nil
 }
 
-// Resolve turns a catalog and a set of options into one plan per service.
+// Resolve turns a catalog and a set of options into one plan per image.
 //
 // It reports every problem it can rather than the first, because the usual
-// cause of a bad invocation is a typo in a service name and a caller who
+// cause of a bad invocation is a typo in an image name and a caller who
 // mistyped one may well have mistyped two.
 func Resolve(cat *catalog.Catalog, opts Options) ([]Plan, error) {
 	if err := ValidateLabel(opts.Label); err != nil {
@@ -174,7 +174,7 @@ func Resolve(cat *catalog.Catalog, opts Options) ([]Plan, error) {
 	return plans, nil
 }
 
-// platformFor lets a service override the target platform. A local build is
+// platformFor lets an image override the target platform. A local build is
 // pinned to the caller's platform regardless: an image that cannot run on the
 // machine that just built it is no use to the person who asked for it, and
 // --load cannot take a foreign architecture usefully anyway.
@@ -205,7 +205,7 @@ const BuildIDArg = "MEIMEI_BUILD_ID"
 
 // buildArgs are the arguments handed to every build.
 //
-// Declared for every service rather than opted into per service, like the
+// Declared for every image rather than opted into per image, like the
 // labels: a Dockerfile that does not name the ARG ignores it, and buildx
 // warning about an unused build argument is not a failure — success is the exit
 // code, never the progress output.
@@ -238,16 +238,16 @@ func ociLabels(cat *catalog.Catalog, opts Options, tag string) []string {
 // selectEntries turns the request into catalog entries.
 func selectEntries(cat *catalog.Catalog, names []string, all bool) ([]catalog.Entry, error) {
 	if all && len(names) > 0 {
-		return nil, fmt.Errorf("--all cannot be combined with a service name")
+		return nil, fmt.Errorf("--all cannot be combined with an image name")
 	}
 	if !all && len(names) == 0 {
-		return nil, fmt.Errorf("no service named (name one or more services, or pass --all)")
+		return nil, fmt.Errorf("no image named (name one or more images, or pass --all)")
 	}
 
 	if all {
 		var out []catalog.Entry
 		for _, e := range cat.Entries {
-			// --all means every service that CAN be built. A disabled one is
+			// --all means every image that CAN be built. A disabled one is
 			// excluded by declaration, and a broken one is reported below.
 			if e.Status == catalog.Buildable {
 				out = append(out, e)
@@ -258,7 +258,7 @@ func selectEntries(cat *catalog.Catalog, names []string, all bool) ([]catalog.En
 				strings.Join(broken, ", "))
 		}
 		if len(out) == 0 {
-			return nil, fmt.Errorf("nothing to build: no service is buildable")
+			return nil, fmt.Errorf("nothing to build: no image is buildable")
 		}
 		return out, nil
 	}
@@ -269,7 +269,7 @@ func selectEntries(cat *catalog.Catalog, names []string, all bool) ([]catalog.En
 
 	for _, name := range names {
 		if seen[name] {
-			continue // naming a service twice is harmless, so build it once
+			continue // naming an image twice is harmless, so build it once
 		}
 		seen[name] = true
 

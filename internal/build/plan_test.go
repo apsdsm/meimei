@@ -73,9 +73,9 @@ dockerfile = "c/Dockerfile"
 disabled = true
 `
 
-func opts(services ...string) Options {
+func opts(images ...string) Options {
 	return Options{
-		Images:   services,
+		Images:   images,
 		Platform: "linux/arm64",
 		Now:      stamp,
 		Output:   OutputLoad,
@@ -115,7 +115,7 @@ func TestResolveSingleService(t *testing.T) {
 	}
 }
 
-// --all builds every buildable service and silently leaves out the ones
+// --all builds every buildable image and silently leaves out the ones
 // declared disabled.
 func TestResolveAllSkipsDisabled(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
@@ -129,19 +129,19 @@ func TestResolveAllSkipsDisabled(t *testing.T) {
 	}
 	for _, p := range plans {
 		if p.Name == "retired" {
-			t.Error("a disabled service was included in --all")
+			t.Error("a disabled image was included in --all")
 		}
 	}
 }
 
-// Naming a disabled service explicitly is a mistake worth reporting — the
+// Naming a disabled image explicitly is a mistake worth reporting — the
 // caller asked for something specific and would otherwise get silence.
 func TestResolveNamedDisabledIsAnError(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
 
 	_, err := Resolve(cat, opts("retired"))
 	if err == nil {
-		t.Fatal("want an error naming the disabled service")
+		t.Fatal("want an error naming the disabled image")
 	}
 	if !strings.Contains(err.Error(), "disabled") || !strings.Contains(err.Error(), "retired") {
 		t.Errorf("error = %q, want it to say retired is disabled", err)
@@ -153,12 +153,12 @@ func TestResolveUnknownServiceListsKnown(t *testing.T) {
 
 	_, err := Resolve(cat, opts("apo"))
 	if err == nil {
-		t.Fatal("want an error for an unknown service")
+		t.Fatal("want an error for an unknown image")
 	}
 	// A mistyped name is the usual cause, so the message has to show the real
 	// ones to be any use.
 	if !strings.Contains(err.Error(), "api") || !strings.Contains(err.Error(), "user-web") {
-		t.Errorf("error = %q, want it to list the known services", err)
+		t.Errorf("error = %q, want it to list the known images", err)
 	}
 }
 
@@ -167,17 +167,17 @@ func TestResolveBrokenServiceIsRefused(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "c/Dockerfile")
 
 	if _, err := Resolve(cat, opts("user-web")); err == nil {
-		t.Fatal("want an error for a service whose Dockerfile is missing")
+		t.Fatal("want an error for an image whose Dockerfile is missing")
 	}
 
 	// And --all refuses too rather than quietly building a subset: a caller who
 	// asked for everything and got four of five images would not know.
 	_, err := Resolve(cat, allOpts())
 	if err == nil {
-		t.Fatal("want --all to refuse while any service is broken")
+		t.Fatal("want --all to refuse while any image is broken")
 	}
 	if !strings.Contains(err.Error(), "user-web") {
-		t.Errorf("error = %q, want it to name the broken service", err)
+		t.Errorf("error = %q, want it to name the broken image", err)
 	}
 }
 
@@ -187,14 +187,14 @@ func TestResolveNoServiceNamed(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error when nothing is named")
 	}
-	// The way out has to be in the message; "no service named" alone leaves the
+	// The way out has to be in the message; "no image named" alone leaves the
 	// caller guessing at the spelling of the flag.
 	if !strings.Contains(err.Error(), "--all") {
 		t.Errorf("error = %q, want it to point at --all", err)
 	}
 }
 
-// Several services in one invocation — something the script could not do at
+// Several images in one invocation — something the script could not do at
 // all, since its only choices were one name or the literal "all".
 func TestResolveSeveralServices(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
@@ -228,7 +228,7 @@ func TestResolveAllWithNamesIsRefused(t *testing.T) {
 	o := opts("api")
 	o.All = true
 	if _, err := Resolve(cat, o); err == nil {
-		t.Fatal("want an error when --all is combined with a service name")
+		t.Fatal("want an error when --all is combined with an image name")
 	}
 }
 

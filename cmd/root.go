@@ -9,7 +9,7 @@ var cfgPath string
 
 var rootCmd = &cobra.Command{
 	Use:   "meimei",
-	Short: "Build and deploy this project's containers",
+	Short: "Build and deploy this project's images",
 	// Errors are already reported by Execute; cobra printing usage on top of a
 	// runtime failure buries the message that matters.
 	SilenceUsage: true,

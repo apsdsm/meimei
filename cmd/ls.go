@@ -14,8 +14,8 @@ import (
 
 var lsCmd = &cobra.Command{
 	Use:   "ls",
-	Short: "List the containers this project can build",
-	Long: "List every service declared in " + ".meimei.toml" + ", what it builds from,\n" +
+	Short: "List the images this project can build",
+	Long: "List every image declared in " + ".meimei.toml" + ", what it builds from,\n" +
 		"and the image a build would produce right now.\n\n" +
 		"Reads only the working tree — no docker daemon, no AWS, no credentials.",
 	Args: cobra.NoArgs,
@@ -47,7 +47,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 	// this command is the pre-flight for a build, and a script gating on it
 	// cannot read the ✕ on screen.
 	if _, broken, _ := cat.Counts(); broken > 0 {
-		return fmt.Errorf("%d service(s) cannot be built", broken)
+		return fmt.Errorf("%s cannot be built", plural(broken, "image", "images"))
 	}
 	return nil
 }
@@ -85,7 +85,7 @@ func emitText(cat *catalog.Catalog) {
 	}
 }
 
-// renderTable lays the services out in columns, arranged by group.
+// renderTable lays the images out in columns, arranged by group.
 //
 // Headings and blank separators carry trailing tabs so that tabwriter keeps ONE
 // set of column widths for the whole table — without them it treats each
@@ -175,13 +175,13 @@ type jsonEntry struct {
 }
 
 type jsonOutput struct {
-	Project  string      `json:"project"`
-	Root     string      `json:"root"`
-	Region   string      `json:"region,omitempty"`
-	Tag      string      `json:"tag,omitempty"`
-	Label    string      `json:"label,omitempty"`
-	Dirty    bool        `json:"dirty"`
-	Services []jsonEntry `json:"services"`
+	Project string      `json:"project"`
+	Root    string      `json:"root"`
+	Region  string      `json:"region,omitempty"`
+	Tag     string      `json:"tag,omitempty"`
+	Label   string      `json:"label,omitempty"`
+	Dirty   bool        `json:"dirty"`
+	Images  []jsonEntry `json:"images"`
 }
 
 func emitJSON(cat *catalog.Catalog) error {
@@ -211,7 +211,7 @@ func emitJSON(cat *catalog.Catalog) error {
 		if e.Tag != "" {
 			je.Image = e.Repository + ":" + e.Tag
 		}
-		out.Services = append(out.Services, je)
+		out.Images = append(out.Images, je)
 	}
 
 	enc := json.NewEncoder(os.Stdout)

@@ -9,7 +9,7 @@ import (
 // right now.
 //
 // Every field is best-effort. A project without git, or a fresh repo with no
-// commits, is still a project whose services can be listed — it just cannot be
+// commits, is still a project whose images can be listed — it just cannot be
 // told which commit a build would carry. So a failure here degrades the display
 // rather than failing the command.
 type Git struct {

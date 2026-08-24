@@ -18,17 +18,18 @@ import (
 )
 
 var deployCmd = &cobra.Command{
-	Use:   "deploy [service...]",
+	Use:   "deploy [image...]",
 	Short: "Promote images onto a target's ECS cluster",
 	Long: "Point a target's ECS services at a different image.\n\n" +
 		"A deploy copies the task definition Terraform registered, swaps the image on the\n" +
-		"named containers, registers the result and rolls the service. It never changes\n" +
-		"anything else about the task — Terraform owns the shape.\n\n" +
-		"Which services are packed into which task is read from the cluster, never from\n" +
-		"config: a service's name is its task family and its container names are the\n" +
-		"services it carries. Services sharing a task are promoted in ONE revision and\n" +
-		"ONE rollout, which is also the only thing that works on a cluster brought up\n" +
-		"fresh, where no container can start until every image in its task is real.",
+		"named containers, registers the result and rolls the ECS service. It never\n" +
+		"changes anything else about the task definition — Terraform owns the shape.\n\n" +
+		"Which images are packed into which task definition is read from the cluster,\n" +
+		"never from config: an ECS service's name is its task definition family, and its\n" +
+		"container names are the images it carries. Images sharing a task definition are\n" +
+		"promoted in ONE revision and ONE rollout, which is also the only thing that\n" +
+		"works on a cluster brought up fresh, where no task can start until every image\n" +
+		"in its definition is real.",
 	Example: "  meimei deploy chatbot --tag sha-eba96de\n" +
 		"  meimei deploy --all --tag acme.2026_010.001 --to dev1\n" +
 		"  meimei deploy api --tag sha-abc1234 --to dev1 --dry-run",
@@ -36,7 +37,7 @@ var deployCmd = &cobra.Command{
 }
 
 func init() {
-	deployCmd.Flags().Bool("all", false, "Deploy every service this repo declares")
+	deployCmd.Flags().Bool("all", false, "Deploy every image this repo declares")
 	deployCmd.Flags().String("tag", "", "Image tag to promote (default: the current commit)")
 	deployCmd.Flags().String("to", "", "Target to deploy to (optional when the project declares one)")
 	deployCmd.Flags().Bool("no-follow", false, "Trigger the rollout and return without waiting")
@@ -70,7 +71,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	cat := catalog.Load(cfg, "")
-	services, err := selectServices(cat, args, all)
+	images, err := selectImages(cat, args, all)
 	if err != nil {
 		return err
 	}
@@ -112,7 +113,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	byFamily := map[string]*work{}
 	var refs []registry.Ref
 
-	for _, name := range services {
+	for _, name := range images {
 		svc, ok := packing.ServiceFor(name)
 		if !ok {
 			return fmt.Errorf("no container %q on cluster %s — it runs %s",
@@ -157,7 +158,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 		// A "from" side still on the placeholder means the registered revision is the
 		// one Terraform wrote and no real image was ever promoted onto it — Terraform
-		// owns the task shape and never the image, so it seeds a tag it cannot fill.
+		// owns the task definition shape and never the image, so it seeds a tag it cannot fill.
 		// Worth saying, because it is exactly the state where a deploy is most needed
 		// and where the newest revision must not be pointed at directly.
 		if fromPlaceholder(current, w.swaps) {
@@ -165,11 +166,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				placeholderTag)
 		}
 
-		// Task-mates that nobody asked to change still restart: a revision is
-		// registered for the whole task and ECS replaces the task, not one
-		// container. Worth saying before it happens rather than after.
+		// Containers nobody asked to change still restart: a revision is
+		// registered for the whole task definition and ECS replaces the running
+		// tasks, not one container. Worth saying before it happens rather than after.
 		if mates := untouched(packing, family, w.swaps); len(mates) > 0 {
-			fmt.Fprintf(os.Stderr, "  also restarts (shared task): %s\n", strings.Join(mates, ", "))
+			fmt.Fprintf(os.Stderr, "  also restarts (same task definition): %s\n", strings.Join(mates, ", "))
 		}
 
 		// A container in the running revision and not in the one being
@@ -178,7 +179,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		// deserves louder billing than the restart line above.
 		if svc, ok := packing.ServiceWithFamily(family); ok {
 			if leaving := svc.Leaving(); len(leaving) > 0 {
-				fmt.Fprintf(os.Stderr, "  REMOVED from this task (Terraform dropped it): %s\n",
+				fmt.Fprintf(os.Stderr, "  REMOVED from this task definition (Terraform dropped it): %s\n",
 					strings.Join(leaving, ", "))
 			}
 			if svc.Behind() {
@@ -219,16 +220,16 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// selectServices picks which of the repo's services to deploy. It deliberately
+// selectImages picks which of the repo's images to deploy. It deliberately
 // mirrors the build selection rather than sharing it: deploying is about what
-// this repo declares, and a service with no Dockerfile here may still be
+// this repo declares, and an image with no Dockerfile here may still be
 // running on the cluster.
-func selectServices(cat *catalog.Catalog, names []string, all bool) ([]string, error) {
+func selectImages(cat *catalog.Catalog, names []string, all bool) ([]string, error) {
 	if all && len(names) > 0 {
-		return nil, fmt.Errorf("--all cannot be combined with a service name")
+		return nil, fmt.Errorf("--all cannot be combined with an image name")
 	}
 	if !all && len(names) == 0 {
-		return nil, fmt.Errorf("no service named (name one or more services, or pass --all)")
+		return nil, fmt.Errorf("no image named (name one or more images, or pass --all)")
 	}
 
 	if all {
@@ -239,7 +240,7 @@ func selectServices(cat *catalog.Catalog, names []string, all bool) ([]string, e
 			}
 		}
 		if len(out) == 0 {
-			return nil, fmt.Errorf("nothing to deploy: every service is disabled")
+			return nil, fmt.Errorf("nothing to deploy: every image is disabled")
 		}
 		return out, nil
 	}
@@ -385,12 +386,12 @@ func reviewFindings(
 			}
 		}
 
-		services := make([]string, 0, len(missing))
+		names := make([]string, 0, len(missing))
 		for _, f := range missing {
-			services = append(services, f.Name)
+			names = append(names, f.Name)
 		}
 		fmt.Fprintf(&b, "\n\n  build and push first:\n      meimei build %s --push\n",
-			strings.Join(services, " "))
+			strings.Join(names, " "))
 
 		if alt := suggest(missing[0].Repo); alt != "" {
 			fmt.Fprintf(&b, "\n  or promote a tag that is there:\n      --tag %s\n", alt)
@@ -437,7 +438,7 @@ func plural(n int, one, many string) string {
 
 // placeholderTag is the image tag Terraform seeds into a task definition it
 // cannot fill: it owns the shape of a task and never the image in it, so the
-// first apply for a service names something unpullable on purpose.
+// first apply for a task definition names something unpullable on purpose.
 //
 // A convention rather than a fact meimei can discover, and it is the same one in
 // every cluster we run. A tag it does not recognise is simply not reported on.
