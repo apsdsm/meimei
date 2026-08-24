@@ -100,27 +100,29 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Group the requested services by the task carrying them, so each task gets
-	// one revision and one rollout however many of its containers changed.
+	// Group the requested images by the task definition carrying them, so each
+	// one gets a single revision and a single rollout however many of its
+	// containers changed.
 	type work struct {
-		family string
-		swaps  []deploy.Swap
+		family  string
+		service string
+		swaps   []deploy.Swap
 	}
 	var order []string
 	byFamily := map[string]*work{}
 	var refs []registry.Ref
 
 	for _, name := range services {
-		task, ok := packing.TaskFor(name)
+		svc, ok := packing.ServiceFor(name)
 		if !ok {
 			return fmt.Errorf("no container %q on cluster %s — it runs %s",
 				name, target.Cluster, strings.Join(packing.Containers(), ", "))
 		}
-		w, seen := byFamily[task.Service]
+		w, seen := byFamily[svc.Family]
 		if !seen {
-			w = &work{family: task.Service}
-			byFamily[task.Service] = w
-			order = append(order, task.Service)
+			w = &work{family: svc.Family, service: svc.Name}
+			byFamily[svc.Family] = w
+			order = append(order, svc.Family)
 		}
 		repo := cfg.Project.Name + "-" + name
 		refs = append(refs, registry.Ref{Service: name, Repo: repo, Tag: tag})
@@ -174,14 +176,14 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		// registered is not restarting — it is going. That is what a Terraform
 		// repacking looks like the moment a deploy finally carries it, and it
 		// deserves louder billing than the restart line above.
-		if task, ok := packing.TaskNamed(family); ok {
-			if leaving := task.Leaving(); len(leaving) > 0 {
+		if svc, ok := packing.ServiceWithFamily(family); ok {
+			if leaving := svc.Leaving(); len(leaving) > 0 {
 				fmt.Fprintf(os.Stderr, "  REMOVED from this task (Terraform dropped it): %s\n",
 					strings.Join(leaving, ", "))
 			}
-			if task.Behind() {
+			if svc.Behind() {
 				fmt.Fprintf(os.Stderr, "  service is on %s, deploying from %s\n",
-					revision(task.Running), revision(task.Deployable))
+					revision(svc.Running), revision(svc.Deployable))
 			}
 		}
 
@@ -189,7 +191,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		arn, err := client.Promote(ctx, family, w.swaps)
+		arn, err := client.Promote(ctx, family, w.service, w.swaps)
 		if err != nil {
 			return err
 		}
@@ -201,7 +203,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 
 		start := time.Now()
-		err = client.Follow(ctx, family, arn, deploy.FollowOptions{
+		err = client.Follow(ctx, w.service, arn, deploy.FollowOptions{
 			Timeout:    timeout,
 			OnProgress: func(p deploy.Progress) { fmt.Fprintf(os.Stderr, "  %s\n", p) },
 		})
@@ -267,18 +269,18 @@ func selectServices(cat *catalog.Catalog, names []string, all bool) ([]string, e
 	return out, nil
 }
 
-// untouched lists containers in a task that nobody asked to change.
+// untouched lists containers in a task definition that nobody asked to change.
 func untouched(p *deploy.Packing, family string, swaps []deploy.Swap) []string {
 	changing := map[string]bool{}
 	for _, s := range swaps {
 		changing[s.Container] = true
 	}
 	var out []string
-	for _, t := range p.Tasks {
-		if t.Service != family {
+	for _, s := range p.Services {
+		if s.Family != family {
 			continue
 		}
-		for _, c := range t.Containers {
+		for _, c := range s.Containers {
 			if !changing[c] {
 				out = append(out, c)
 			}

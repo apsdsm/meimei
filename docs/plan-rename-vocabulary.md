@@ -1,7 +1,7 @@
 # Rename plan: meimei's nouns to AWS's
 
 **Status:** in progress. Written 2026-08-24 from the finding in
-[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0-2 are done** — the next one is step 3.
+[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0-3 are done** — the next one is step 4.
 
 This is a rename plus a version gate. It fixes no bug — including the silent-overwrite bug in
 `byContainer`, which stays exactly as it is. Steps 1-5 change no behaviour at all; step 6 changes
@@ -192,7 +192,7 @@ updates [config-reference.md](config-reference.md) in the same commit** — step
 | 0 ✓ | Capture baseline output — see Verification. Do this before touching anything. |
 | 1 ✓ | `config.Service` → `config.Image`, `[[services]]` → `[[images]]`, `Config.Services` → `Config.Images`, the three methods taking one, and the `services[%d] has no name` / `duplicate service %q` / `service %q: …` validation messages. Test fixtures with it. **Reference doc: the `[[images]]` table.** |
 | 2 ✓ | `Target`'s doc comments only: say that `cluster` is the ECS cluster, that nothing here names the ECS service, and that the next change adds it. No identifier moves. |
-| 3 | `deploy.Task` → `deploy.Service`, `Tasks` → `Services`, `TaskFor` → `ServiceFor`, `TaskNamed` → `ServiceNamed`, and split `Service` → `Name` + `Family` with both assigned from `svc.ServiceName`. |
+| 3 ✓ | `deploy.Task` → `deploy.Service`, `Tasks` → `Services`, `TaskFor` → `ServiceFor`, `TaskNamed` → `ServiceNamed`, and split `Service` → `Name` + `Family` with both assigned from `svc.ServiceName`. |
 | 4 | The leaf renames: `catalog.Entry.Service`, `build.Options.Services`, `build.Plan.Service`, `registry.Ref.Service`. |
 | 5 | The version gate: `ConfigVersion = 2` const, `Config.Version int` with `toml:"version"`, and the check in `LoadFrom` **before** `Validate`. Three tests — v2 loads, a file with no `version` is refused naming the two edits, `version = 3` is refused saying to upgrade. Every test fixture in the repo gains `version = 2`. **Reference doc: the `version` section and the two refusal messages.** |
 | 6 | The user-facing sweep — help text, error messages, `ls --json`'s `"services"` key, and the `(s)` plurals — against the canonical list in [terms.md](terms.md). Every string is listed in "Step 6 in full" below. |
@@ -289,11 +289,23 @@ like a rename bug. `.git/info/exclude` is local and never committed, unlike `.gi
 Adding `version = 2` now is harmless before step 5 — an unknown key is ignored — so one copy serves
 every step.
 
+Diff through a normaliser, because the default tag is derived from the commit and HEAD in these repos
+moves for reasons that have nothing to do with meimei — it moved once mid-rename during this work:
+
+```bash
+norm() { sed -E 's/sha-[0-9a-f]{7,40}/sha-HEAD/g'; }
+```
+
+Without it a colleague's commit in `acme_main` reads as five changed lines in `ls --json` and looks
+like a rename bug. A run with an explicit `--tag` needs no normalising, which is why the tagged
+dry-run below is the check to trust.
+
 **After each of steps 1-4**, with the newly built binary:
 
 ```bash
-meimei --config .meimei.v2.toml ls --json | diff /tmp/before-ls.json -
-meimei --config .meimei.v2.toml deploy --all --to dev1 --dry-run 2>&1 | diff /tmp/before-deploy.txt -
+meimei --config .meimei.v2.toml ls --json | norm | diff <(norm < /tmp/before-ls.json) -
+meimei --config .meimei.v2.toml deploy --all --to dev1 --tag acme.20260820.002 --dry-run 2>&1 |
+  diff /tmp/before-deploy-tagged.txt -
 ```
 
 Both must be empty. The rename is behaviour-preserving, so any diff is a bug.
