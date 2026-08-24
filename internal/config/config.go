@@ -73,12 +73,21 @@ type Registry struct {
 
 // Target is somewhere images get deployed to.
 //
-// It holds only what cannot be discovered: which account and cluster a target
-// name refers to, and how to authenticate. Which task each service is packed
-// into is NOT here — that is a per-cluster Terraform decision, read from the
-// cluster at deploy time.
+// It holds only what cannot be discovered: which account and ECS cluster a
+// target name refers to, and how to authenticate. Which task definition each
+// image is packed into is NOT here — that is a per-cluster Terraform decision,
+// read from the cluster at deploy time.
+//
+// NOTHING HERE NAMES THE ECS SERVICE. A deploy back-infers it by asking every
+// service in the cluster which containers it carries and matching on the
+// container name, which works only while container names are unique across the
+// whole cluster. Two environments of one image in one cluster break that
+// silently — see docs/gap-many-environments-one-cluster.md — and the field that
+// fixes it goes here, which is why this stays `Target` rather than becoming
+// `Cluster`: a target is about to be a cluster plus a scope inside it.
 type Target struct {
-	// Name is what you type: `--to dev1`.
+	// Name is what you type: `--to dev1`. A local label with no counterpart in
+	// AWS.
 	Name string `toml:"name"`
 
 	// Account is the AWS account holding the cluster, asserted before any
