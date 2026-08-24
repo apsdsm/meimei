@@ -1,7 +1,7 @@
 # Rename plan: meimei's nouns to AWS's
 
 **Status:** in progress. Written 2026-08-24 from the finding in
-[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Step 0 is done**; step 1 lands in the next commit.
+[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0 and 1 are done** — the next one is step 2.
 
 This is a rename plus a version gate. It fixes no bug — including the silent-overwrite bug in
 `byContainer`, which stays exactly as it is. Steps 1-5 change no behaviour at all; step 6 changes
@@ -190,7 +190,7 @@ updates [config-reference.md](config-reference.md) in the same commit** — step
 | Step | Change |
 |---|---|
 | 0 ✓ | Capture baseline output — see Verification. Do this before touching anything. |
-| 1 | `config.Service` → `config.Image`, `[[services]]` → `[[images]]`, `Config.Services` → `Config.Images`, the three methods taking one, and the `services[%d] has no name` / `duplicate service %q` / `service %q: …` validation messages. Test fixtures with it. **Reference doc: the `[[images]]` table.** |
+| 1 ✓ | `config.Service` → `config.Image`, `[[services]]` → `[[images]]`, `Config.Services` → `Config.Images`, the three methods taking one, and the `services[%d] has no name` / `duplicate service %q` / `service %q: …` validation messages. Test fixtures with it. **Reference doc: the `[[images]]` table.** |
 | 2 | `Target`'s doc comments only: say that `cluster` is the ECS cluster, that nothing here names the ECS service, and that the next change adds it. No identifier moves. |
 | 3 | `deploy.Task` → `deploy.Service`, `Tasks` → `Services`, `TaskFor` → `ServiceFor`, `TaskNamed` → `ServiceNamed`, and split `Service` → `Name` + `Family` with both assigned from `svc.ServiceName`. |
 | 4 | The leaf renames: `catalog.Entry.Service`, `build.Options.Services`, `build.Plan.Service`, `registry.Ref.Service`. |

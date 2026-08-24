@@ -10,7 +10,7 @@ const withTargets = `
 name = "tc"
 region = "ap-northeast-1"
 
-[[services]]
+[[images]]
 name = "chatbot"
 dockerfile = "Dockerfile"
 
@@ -109,7 +109,7 @@ func TestNoTargets(t *testing.T) {
 }
 
 func TestRegistryAndTargetValidation(t *testing.T) {
-	base := "[project]\nname = \"tc\"\nregion = \"ap-northeast-1\"\n\n[[services]]\nname = \"a\"\ndockerfile = \"D\"\n"
+	base := "[project]\nname = \"tc\"\nregion = \"ap-northeast-1\"\n\n[[images]]\nname = \"a\"\ndockerfile = \"D\"\n"
 	cases := []struct{ name, body, want string }{
 		{"registry without account", base + "[registry]\nprofile = \"p\"\n", "registry.account is required"},
 		{"target without cluster", base + "[[targets]]\nname = \"t\"\naccount = \"1\"\n", "has no cluster"},
@@ -132,7 +132,7 @@ func TestRegistryAndTargetValidation(t *testing.T) {
 
 // A region has to come from somewhere; project.region is the usual source.
 func TestRegistryNeedsARegion(t *testing.T) {
-	_, err := LoadFrom(write(t, "[project]\nname = \"tc\"\n\n[[services]]\nname = \"a\"\ndockerfile = \"D\"\n\n[registry]\naccount = \"1\"\n"))
+	_, err := LoadFrom(write(t, "[project]\nname = \"tc\"\n\n[[images]]\nname = \"a\"\ndockerfile = \"D\"\n\n[registry]\naccount = \"1\"\n"))
 	if err == nil || !strings.Contains(err.Error(), "region") {
 		t.Errorf("err = %v, want a complaint about the missing region", err)
 	}

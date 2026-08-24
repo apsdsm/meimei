@@ -39,12 +39,12 @@ const twoServices = `
 [project]
 name = "acme"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "services/api/Dockerfile"
 group = "api"
 
-[[services]]
+[[images]]
 name = "user-web"
 dockerfile = "services/web/Dockerfile"
 group = "web"
@@ -110,7 +110,7 @@ func TestLoadDisabledIsNotInspected(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[images]]
 name = "retired"
 dockerfile = "services/gone/Dockerfile"
 disabled = true
@@ -132,7 +132,7 @@ func TestLoadFileWithoutFromIsBroken(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "Dockerfile"
 `), 0o644); err != nil {
@@ -158,7 +158,7 @@ func TestLoadDirectoryAtDockerfilePathIsBroken(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "services/api/Dockerfile"
 `)
@@ -177,17 +177,17 @@ func TestGroupsAreInFirstSeenOrder(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "a/Dockerfile"
 group = "api"
 
-[[services]]
+[[images]]
 name = "user-web"
 dockerfile = "b/Dockerfile"
 group = "web"
 
-[[services]]
+[[images]]
 name = "process-runner"
 dockerfile = "c/Dockerfile"
 group = "api"
@@ -216,11 +216,11 @@ func TestGroupsPutUngroupedLast(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[images]]
 name = "docs"
 dockerfile = "a/Dockerfile"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "b/Dockerfile"
 group = "api"
