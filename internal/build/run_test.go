@@ -13,7 +13,7 @@ import (
 
 func samplePlan() Plan {
 	return Plan{
-		Service:    "api",
+		Name:       "api",
 		Image:      "jjc2-api:sha-abc1234",
 		Repository: "jjc2-api",
 		Tag:        "sha-abc1234",

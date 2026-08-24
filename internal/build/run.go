@@ -92,7 +92,7 @@ func (r Runner) Run(ctx context.Context, p Plan) error {
 	cmd.Stderr = r.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("building %s: %w", p.Service, err)
+		return fmt.Errorf("building %s: %w", p.Name, err)
 	}
 	return nil
 }

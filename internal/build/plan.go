@@ -36,7 +36,7 @@ const (
 // Plan is one resolved build: everything needed to run it, and nothing that
 // needed asking docker or AWS to work out.
 type Plan struct {
-	Service string
+	Name string
 
 	// Image is the full reference the image is tagged with. For a local build
 	// that is repository:tag with no registry host, which is a valid local
@@ -67,8 +67,8 @@ type Plan struct {
 // Options are the choices a caller makes; everything else comes from the
 // catalog.
 type Options struct {
-	// Services names what to build. Empty with All set means everything.
-	Services []string
+	// Images names what to build. Empty with All set means everything.
+	Images []string
 
 	// All selects every buildable service.
 	//
@@ -141,7 +141,7 @@ func Resolve(cat *catalog.Catalog, opts Options) ([]Plan, error) {
 		return nil, fmt.Errorf("no platform resolved")
 	}
 
-	entries, err := selectEntries(cat, opts.Services, opts.All)
+	entries, err := selectEntries(cat, opts.Images, opts.All)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func Resolve(cat *catalog.Catalog, opts Options) ([]Plan, error) {
 	plans := make([]Plan, 0, len(entries))
 	for _, e := range entries {
 		plans = append(plans, Plan{
-			Service:    e.Service.Name,
+			Name:       e.Image.Name,
 			Image:      imageRef(opts.RegistryHost, e.Repository, tag),
 			Repository: e.Repository,
 			Tag:        tag,
@@ -182,8 +182,8 @@ func platformFor(e catalog.Entry, opts Options) string {
 	if opts.Output == OutputLoad {
 		return opts.Platform
 	}
-	if e.Service.Platform != "" {
-		return e.Service.Platform
+	if e.Image.Platform != "" {
+		return e.Image.Platform
 	}
 	return opts.Platform
 }
@@ -312,7 +312,7 @@ func selectEntries(cat *catalog.Catalog, names []string, all bool) ([]catalog.En
 func knownNames(cat *catalog.Catalog) []string {
 	names := make([]string, 0, len(cat.Entries))
 	for _, e := range cat.Entries {
-		names = append(names, e.Service.Name)
+		names = append(names, e.Image.Name)
 	}
 	sort.Strings(names)
 	return names
@@ -322,7 +322,7 @@ func brokenNames(cat *catalog.Catalog) []string {
 	var names []string
 	for _, e := range cat.Entries {
 		if e.Status == catalog.Broken {
-			names = append(names, e.Service.Name)
+			names = append(names, e.Image.Name)
 		}
 	}
 	return names

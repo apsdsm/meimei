@@ -72,7 +72,7 @@ disabled = true
 
 func opts(services ...string) Options {
 	return Options{
-		Services: services,
+		Images:   services,
 		Platform: "linux/arm64",
 		Now:      stamp,
 		Output:   OutputLoad,
@@ -125,7 +125,7 @@ func TestResolveAllSkipsDisabled(t *testing.T) {
 		t.Fatalf("got %d plans, want 2 (retired is disabled)", len(plans))
 	}
 	for _, p := range plans {
-		if p.Service == "retired" {
+		if p.Name == "retired" {
 			t.Error("a disabled service was included in --all")
 		}
 	}
@@ -203,8 +203,8 @@ func TestResolveSeveralServices(t *testing.T) {
 	if len(plans) != 2 {
 		t.Fatalf("got %d plans, want 2", len(plans))
 	}
-	if plans[0].Service != "api" || plans[1].Service != "user-web" {
-		t.Errorf("plans = %s/%s, want them in the order named", plans[0].Service, plans[1].Service)
+	if plans[0].Name != "api" || plans[1].Name != "user-web" {
+		t.Errorf("plans = %s/%s, want them in the order named", plans[0].Name, plans[1].Name)
 	}
 
 	// Naming one twice is a slip, not a request for two builds.

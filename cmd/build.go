@@ -95,7 +95,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := build.Options{
-		Services: args,
+		Images:   args,
 		All:      all,
 		Label:    label,
 		Now:      time.Now(),
@@ -128,7 +128,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	if dryRun {
 		for _, p := range plans {
-			fmt.Printf("%s\n  %s\n", p.Service, p.String())
+			fmt.Printf("%s\n  %s\n", p.Name, p.String())
 			if p.Output == build.OutputPush && p.Route == build.RouteCLI {
 				fmt.Printf("  docker push %s\n", p.Image)
 			}
@@ -157,7 +157,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	// somewhere for several streams of output to go, and neither belongs in the
 	// step that proves the build works at all.
 	for i, p := range plans {
-		fmt.Fprintf(os.Stderr, "\n[%d/%d] %s → %s (%s)\n", i+1, len(plans), p.Service, p.Image, p.Platform)
+		fmt.Fprintf(os.Stderr, "\n[%d/%d] %s → %s (%s)\n", i+1, len(plans), p.Name, p.Image, p.Platform)
 		if err := runner.Run(ctx, p); err != nil {
 			return err
 		}
