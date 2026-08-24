@@ -8,7 +8,15 @@ import (
 )
 
 // write puts a config file in a fresh directory and returns its path.
+// write puts the format version on the front, so the fixtures below stay about
+// what they are testing. The version itself is tested through writeRaw.
 func write(t *testing.T, body string) string {
+	t.Helper()
+	return writeRaw(t, "version = 2\n"+body)
+}
+
+// writeRaw writes a body verbatim, version key and all.
+func writeRaw(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
@@ -232,5 +240,50 @@ func TestAbsPaths(t *testing.T) {
 	}
 	if cfg.AbsContext(img) != cfg.Root {
 		t.Errorf("AbsContext = %q, want the build root %q", cfg.AbsContext(img), cfg.Root)
+	}
+}
+
+// The version gate is checked before Validate, and both directions of a
+// mismatch have to say what to do: an older file needs editing, a newer one
+// needs a newer meimei. A v1 file is the case that matters most, because
+// [[services]] decodes into nothing and the honest-looking failure would be
+// "no images defined" — true, and no help at all.
+
+func TestVersionTwoLoads(t *testing.T) {
+	cfg, err := LoadFrom(writeRaw(t, "version = 2\n"+minimal))
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.Version != ConfigVersion {
+		t.Errorf("Version = %d, want %d", cfg.Version, ConfigVersion)
+	}
+}
+
+func TestVersionOneIsRefusedWithTheEdits(t *testing.T) {
+	// A real v1 file: no version key, and the old table name.
+	body := "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\n"
+
+	_, err := LoadFrom(writeRaw(t, body))
+	if err == nil {
+		t.Fatal("LoadFrom succeeded, want a refusal")
+	}
+	for _, want := range []string{"version 1", "version = 2", "[[images]]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
+	}
+	// The failure a version check exists to prevent.
+	if strings.Contains(err.Error(), "no images defined") {
+		t.Errorf("refused as an empty file rather than a v1 file:\n%v", err)
+	}
+}
+
+func TestVersionFromTheFutureSaysUpgrade(t *testing.T) {
+	_, err := LoadFrom(writeRaw(t, "version = 99\n"+minimal))
+	if err == nil {
+		t.Fatal("LoadFrom succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "version 99") || !strings.Contains(err.Error(), "go install") {
+		t.Errorf("want the version and how to upgrade, got:\n%v", err)
 	}
 }

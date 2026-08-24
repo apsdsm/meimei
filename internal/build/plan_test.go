@@ -20,7 +20,10 @@ func fixture(t *testing.T, toml string, dockerfiles ...string) *catalog.Catalog 
 	t.Helper()
 	root := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(toml), 0o644); err != nil {
+	// Every fixture gets the format version, so the fixtures below stay about
+	// what they are testing.
+	body := "version = 2\n" + toml
+	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, rel := range dockerfiles {

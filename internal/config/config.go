@@ -22,6 +22,17 @@ import (
 // FileName is the config file meimei looks for.
 const FileName = ".meimei.toml"
 
+// ConfigVersion is the .meimei.toml format this binary reads. A file must say
+// `version = <this>` as its first line and no other value is accepted: there is
+// no compatibility shim and none is planned.
+//
+// It is an integer rather than a sniff for a known-old key because sniffing only
+// recognises renames already made. It cannot see a breaking change that ADDS a
+// required key — toml ignores what it does not know, so an old file missing a new
+// key looks exactly like a new file whose author left it out. Bumping this and
+// writing one message is what the next breaking change costs.
+const ConfigVersion = 2
+
 // DefaultPlatform is what images are built for when nothing says otherwise.
 // Every ECS target we deploy to runs on Graviton, so an amd64 image would be
 // dead weight nothing schedules.
@@ -29,6 +40,10 @@ const DefaultPlatform = "linux/arm64"
 
 // Config is a whole .meimei.toml.
 type Config struct {
+	// Version is the format version, checked before anything else is read. See
+	// ConfigVersion.
+	Version int `toml:"version"`
+
 	Project  Project   `toml:"project"`
 	Images   []Image   `toml:"images"`
 	Registry *Registry `toml:"registry"`
@@ -177,6 +192,13 @@ func LoadFrom(path string) (*Config, error) {
 	var cfg Config
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", abs, err)
+	}
+
+	// Before the defaults and before Validate: a v1 file decodes to no images at
+	// all, so without this it fails with "no images defined" and says nothing
+	// about the rename that actually happened.
+	if err := checkVersion(cfg.Version); err != nil {
+		return nil, fmt.Errorf("%s: %w", abs, err)
 	}
 	cfg.Path = abs
 	cfg.Root = filepath.Dir(abs)
@@ -394,4 +416,37 @@ func (c *Config) TargetNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// checkVersion refuses a file this binary does not read, naming the way out.
+//
+// Two directions, because a shared repo has people on either side of an
+// upgrade: an older file needs editing, a newer one needs a newer meimei.
+func checkVersion(v int) error {
+	switch {
+	case v == ConfigVersion:
+		return nil
+
+	case v > ConfigVersion:
+		return fmt.Errorf("this file is version %d, and this meimei reads version %d\n\n"+
+			"  upgrade:  go install github.com/apsdsm/meimei@latest",
+			v, ConfigVersion)
+
+	// Zero means the key is absent, which is what every file written before the
+	// key existed looks like. Same edits either way.
+	default:
+		return fmt.Errorf("this file is version 1 (%s)\n\n"+
+			"  meimei reads version %d only. Two edits:\n"+
+			"      add     version = %d      as the first line\n"+
+			"      rename  [[services]]  →  [[images]]\n\n"+
+			"  nothing else in the file changes.",
+			versionSaid(v), ConfigVersion, ConfigVersion)
+	}
+}
+
+func versionSaid(v int) string {
+	if v == 0 {
+		return "it has no version key"
+	}
+	return fmt.Sprintf("it says version = %d", v)
 }
