@@ -30,7 +30,7 @@ const DefaultPlatform = "linux/arm64"
 // Config is a whole .meimei.toml.
 type Config struct {
 	Project  Project   `toml:"project"`
-	Services []Service `toml:"services"`
+	Images   []Image   `toml:"images"`
 	Registry *Registry `toml:"registry"`
 	Targets  []Target  `toml:"targets"`
 
@@ -97,10 +97,11 @@ type Target struct {
 	Region string `toml:"region"`
 }
 
-// Service is one buildable container image.
-type Service struct {
-	// Name is the service's identity everywhere: the image repository suffix,
-	// the container name inside its ECS task, and what you type at the CLI.
+// Image is one buildable container image.
+type Image struct {
+	// Name is the image's identity everywhere: the ECR repository suffix, the
+	// container name inside its ECS task definition, and what you type at the
+	// CLI.
 	Name string `toml:"name"`
 
 	// Short is an optional abbreviation, for a future keyboard shortcut.
@@ -110,35 +111,36 @@ type Service struct {
 	Dockerfile string `toml:"dockerfile"`
 
 	// Context is the docker build context, relative to the build root.
-	// Defaults to the build root itself, which is what every service we have
-	// needs — Dockerfiles copy across service boundaries (the api's go.work
+	// Defaults to the build root itself, which is what every image we have
+	// needs — Dockerfiles copy across directory boundaries (the api's go.work
 	// replace, the web workspace's shared install).
 	Context string `toml:"context"`
 
-	// Group is how THIS REPOSITORY organises its services — "api", "web",
+	// Group is how THIS REPOSITORY organises its images — "api", "web",
 	// "worker" — and is used only to arrange them on screen. It says nothing
 	// about how they are deployed.
 	//
-	// Deliberately not the ECS task a service is packed into. Packing is a
-	// per-cluster Terraform decision made for that cluster's box (dev1 packs
-	// everything onto two tasks so an m7g.medium needs only ~2 task-ENIs; a
-	// production cluster sized for real traffic will split them differently),
-	// so a copy here would be a global mirror of a per-target fact — one that
-	// can only ever drift, and drift silently. meimei reads the packing from
-	// the cluster instead: an ECS service's name is its task family, and its
-	// container names are the services in it, so two API calls give the
-	// authoritative mapping for whichever target is being deployed to.
+	// Deliberately not the ECS task definition an image is packed into. Packing
+	// is a per-cluster Terraform decision made for that cluster's box (dev1
+	// packs everything onto two task definitions so an m7g.medium needs only ~2
+	// task-ENIs; a production cluster sized for real traffic will split them
+	// differently), so a copy here would be a global mirror of a per-target
+	// fact — one that can only ever drift, and drift silently. meimei reads the
+	// packing from the cluster instead: an ECS service's name is its task
+	// definition family, and its container names are the images in it, so two
+	// API calls give the authoritative mapping for whichever target is being
+	// deployed to.
 	Group string `toml:"group"`
 
-	// Platform overrides Project.Platform for this service alone.
+	// Platform overrides Project.Platform for this image alone.
 	Platform string `toml:"platform"`
 
-	// Color is the accent used for this service's name on screen.
+	// Color is the accent used for this image's name on screen.
 	Color string `toml:"color"`
 
-	// Disabled keeps a service in the file but out of every build. A service
-	// that is being brought up, or one that has been retired but whose
-	// definition is not ready to delete, is better declared than forgotten.
+	// Disabled keeps an image in the file but out of every build. An image that
+	// is being brought up, or one that has been retired but whose definition is
+	// not ready to delete, is better declared than forgotten.
 	Disabled bool `toml:"disabled"`
 }
 
@@ -173,12 +175,12 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Project.Platform == "" {
 		cfg.Project.Platform = DefaultPlatform
 	}
-	for i := range cfg.Services {
-		if cfg.Services[i].Platform == "" {
-			cfg.Services[i].Platform = cfg.Project.Platform
+	for i := range cfg.Images {
+		if cfg.Images[i].Platform == "" {
+			cfg.Images[i].Platform = cfg.Project.Platform
 		}
-		if cfg.Services[i].Context == "" {
-			cfg.Services[i].Context = "."
+		if cfg.Images[i].Context == "" {
+			cfg.Images[i].Context = "."
 		}
 	}
 
@@ -203,47 +205,47 @@ func LoadFrom(path string) (*Config, error) {
 // Dockerfile actually exists is deliberately NOT checked here: that is a fact
 // about the working tree, it changes between branches, and reporting it as a
 // load failure would mean a single missing file stops you seeing the other four
-// services. The catalog reports it per service instead.
+// images. The catalog reports it per image instead.
 func (c *Config) Validate() error {
 	if c.Project.Name == "" {
 		return fmt.Errorf("project.name is required (it prefixes every image repository)")
 	}
-	if len(c.Services) == 0 {
-		return fmt.Errorf("no services defined")
+	if len(c.Images) == 0 {
+		return fmt.Errorf("no images defined")
 	}
 
-	seen := make(map[string]bool, len(c.Services))
-	shorts := make(map[string]string, len(c.Services))
-	for i, s := range c.Services {
-		if s.Name == "" {
-			return fmt.Errorf("services[%d] has no name", i)
+	seen := make(map[string]bool, len(c.Images))
+	shorts := make(map[string]string, len(c.Images))
+	for i, img := range c.Images {
+		if img.Name == "" {
+			return fmt.Errorf("images[%d] has no name", i)
 		}
-		if seen[s.Name] {
-			return fmt.Errorf("duplicate service %q", s.Name)
+		if seen[img.Name] {
+			return fmt.Errorf("duplicate image %q", img.Name)
 		}
-		seen[s.Name] = true
+		seen[img.Name] = true
 
-		if s.Short != "" {
-			if prev, clash := shorts[s.Short]; clash {
-				return fmt.Errorf("services %q and %q share the short name %q", prev, s.Name, s.Short)
+		if img.Short != "" {
+			if prev, clash := shorts[img.Short]; clash {
+				return fmt.Errorf("images %q and %q share the short name %q", prev, img.Name, img.Short)
 			}
-			shorts[s.Short] = s.Name
+			shorts[img.Short] = img.Name
 		}
 
-		if s.Dockerfile == "" {
-			return fmt.Errorf("service %q has no dockerfile", s.Name)
+		if img.Dockerfile == "" {
+			return fmt.Errorf("image %q has no dockerfile", img.Name)
 		}
-		if filepath.IsAbs(s.Dockerfile) {
-			return fmt.Errorf("service %q: dockerfile must be relative to the build root, got %q", s.Name, s.Dockerfile)
+		if filepath.IsAbs(img.Dockerfile) {
+			return fmt.Errorf("image %q: dockerfile must be relative to the build root, got %q", img.Name, img.Dockerfile)
 		}
-		if escapes(s.Dockerfile) {
-			return fmt.Errorf("service %q: dockerfile %q escapes the build root", s.Name, s.Dockerfile)
+		if escapes(img.Dockerfile) {
+			return fmt.Errorf("image %q: dockerfile %q escapes the build root", img.Name, img.Dockerfile)
 		}
-		if filepath.IsAbs(s.Context) {
-			return fmt.Errorf("service %q: context must be relative to the build root, got %q", s.Name, s.Context)
+		if filepath.IsAbs(img.Context) {
+			return fmt.Errorf("image %q: context must be relative to the build root, got %q", img.Name, img.Context)
 		}
-		if escapes(s.Context) {
-			return fmt.Errorf("service %q: context %q escapes the build root", s.Name, s.Context)
+		if escapes(img.Context) {
+			return fmt.Errorf("image %q: context %q escapes the build root", img.Name, img.Context)
 		}
 	}
 	return c.validateRegistryAndTargets()
@@ -285,20 +287,20 @@ func escapes(rel string) bool {
 	return clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
-// AbsDockerfile is the service's Dockerfile as an absolute path.
-func (c *Config) AbsDockerfile(s Service) string {
-	return filepath.Join(c.Root, s.Dockerfile)
+// AbsDockerfile is the image's Dockerfile as an absolute path.
+func (c *Config) AbsDockerfile(i Image) string {
+	return filepath.Join(c.Root, i.Dockerfile)
 }
 
-// AbsContext is the service's build context as an absolute path.
-func (c *Config) AbsContext(s Service) string {
-	return filepath.Join(c.Root, s.Context)
+// AbsContext is the image's build context as an absolute path.
+func (c *Config) AbsContext(i Image) string {
+	return filepath.Join(c.Root, i.Context)
 }
 
-// Repository is the image repository name for a service: project-service, the
-// same derivation the shell scripts use (`${PRODUCT}-${SERVICE}`).
-func (c *Config) Repository(s Service) string {
-	return c.Project.Name + "-" + s.Name
+// Repository is the ECR repository name for an image: project-image, the same
+// derivation the shell scripts use (`${PRODUCT}-${SERVICE}`).
+func (c *Config) Repository(i Image) string {
+	return c.Project.Name + "-" + i.Name
 }
 
 // validateRegistryAndTargets checks the deployment half of the file. Called

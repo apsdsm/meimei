@@ -56,15 +56,15 @@ const threeServices = `
 [project]
 name = "jjc2"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "a/Dockerfile"
 
-[[services]]
+[[images]]
 name = "user-web"
 dockerfile = "b/Dockerfile"
 
-[[services]]
+[[images]]
 name = "retired"
 dockerfile = "c/Dockerfile"
 disabled = true
@@ -331,7 +331,7 @@ func TestLocalBuildIgnoresServicePlatform(t *testing.T) {
 name = "jjc2"
 platform = "linux/arm64"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "a/Dockerfile"
 `, "a/Dockerfile")
@@ -418,7 +418,7 @@ func TestPushUsesConfiguredPlatform(t *testing.T) {
 name = "jjc2"
 platform = "linux/arm64"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "a/Dockerfile"
 `, "a/Dockerfile")

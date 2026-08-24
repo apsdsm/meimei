@@ -45,7 +45,7 @@ func (s Status) String() string {
 
 // Entry is one service, as the catalog found it.
 type Entry struct {
-	Service config.Service
+	Service config.Image
 	Status  Status
 
 	// Repository is the image repository this service builds into.
@@ -84,8 +84,8 @@ func Load(cfg *config.Config, label string) *Catalog {
 	git := ReadGit(cfg.Root)
 	tag := git.Tag(label)
 
-	entries := make([]Entry, 0, len(cfg.Services))
-	for _, svc := range cfg.Services {
+	entries := make([]Entry, 0, len(cfg.Images))
+	for _, svc := range cfg.Images {
 		e := Entry{
 			Service:    svc,
 			Repository: cfg.Repository(svc),
@@ -140,7 +140,7 @@ func inspect(path string) (Status, string, Dockerfile) {
 // related services are written together. Sorting would scatter them.
 //
 // This is the repository's own organisation, not a deployment shape — see
-// config.Service.Group.
+// config.Image.Group.
 func (c *Catalog) Groups() []Group {
 	var order []string
 	byGroup := map[string][]Entry{}

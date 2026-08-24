@@ -22,7 +22,7 @@ const minimal = `
 [project]
 name = "jjc2"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "services/api/Dockerfile"
 `
@@ -41,14 +41,14 @@ func TestLoadFromDefaults(t *testing.T) {
 	if cfg.Project.Platform != DefaultPlatform {
 		t.Errorf("Project.Platform = %q, want the default %q", cfg.Project.Platform, DefaultPlatform)
 	}
-	svc := cfg.Services[0]
-	if svc.Platform != DefaultPlatform {
-		t.Errorf("service Platform = %q, want it inherited from the project", svc.Platform)
+	img := cfg.Images[0]
+	if img.Platform != DefaultPlatform {
+		t.Errorf("image Platform = %q, want it inherited from the project", img.Platform)
 	}
-	if svc.Context != "." {
-		t.Errorf("service Context = %q, want the build root", svc.Context)
+	if img.Context != "." {
+		t.Errorf("image Context = %q, want the build root", img.Context)
 	}
-	if got := cfg.Repository(svc); got != "jjc2-api" {
+	if got := cfg.Repository(img); got != "jjc2-api" {
 		t.Errorf("Repository = %q, want jjc2-api", got)
 	}
 }
@@ -59,11 +59,11 @@ func TestServicePlatformOverridesProject(t *testing.T) {
 name = "jjc2"
 platform = "linux/arm64"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "a/Dockerfile"
 
-[[services]]
+[[images]]
 name = "legacy"
 dockerfile = "b/Dockerfile"
 platform = "linux/amd64"
@@ -71,17 +71,17 @@ platform = "linux/amd64"
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
 	}
-	if cfg.Services[0].Platform != "linux/arm64" {
-		t.Errorf("api platform = %q, want the project default", cfg.Services[0].Platform)
+	if cfg.Images[0].Platform != "linux/arm64" {
+		t.Errorf("api platform = %q, want the project default", cfg.Images[0].Platform)
 	}
-	if cfg.Services[1].Platform != "linux/amd64" {
-		t.Errorf("legacy platform = %q, want its own override", cfg.Services[1].Platform)
+	if cfg.Images[1].Platform != "linux/amd64" {
+		t.Errorf("legacy platform = %q, want its own override", cfg.Images[1].Platform)
 	}
 }
 
 // A missing Dockerfile must load cleanly. It is a fact about the working tree,
-// not about the file, and the catalog reports it per service — failing the load
-// would hide every other service behind one bad path.
+// not about the file, and the catalog reports it per image — failing the load
+// would hide every other image behind one bad path.
 func TestLoadDoesNotCheckDockerfileExists(t *testing.T) {
 	if _, err := LoadFrom(write(t, minimal)); err != nil {
 		t.Fatalf("LoadFrom: %v", err)
@@ -96,47 +96,47 @@ func TestValidateRejects(t *testing.T) {
 	}{
 		{
 			name: "no project name",
-			body: "[[services]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\n",
+			body: "[[images]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\n",
 			want: "project.name is required",
 		},
 		{
-			name: "no services",
+			name: "no images",
 			body: "[project]\nname = \"jjc2\"\n",
-			want: "no services defined",
+			want: "no images defined",
 		},
 		{
-			name: "service without a name",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\ndockerfile = \"a/Dockerfile\"\n",
-			want: "services[0] has no name",
+			name: "image without a name",
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\ndockerfile = \"a/Dockerfile\"\n",
+			want: "images[0] has no name",
 		},
 		{
-			name: "duplicate service",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\ndockerfile = \"a\"\n\n[[services]]\nname = \"api\"\ndockerfile = \"b\"\n",
-			want: `duplicate service "api"`,
+			name: "duplicate image",
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"a\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"b\"\n",
+			want: `duplicate image "api"`,
 		},
 		{
 			name: "clashing shorts",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\nshort = \"aa\"\ndockerfile = \"a\"\n\n[[services]]\nname = \"web\"\nshort = \"aa\"\ndockerfile = \"b\"\n",
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\nname = \"api\"\nshort = \"aa\"\ndockerfile = \"a\"\n\n[[images]]\nname = \"web\"\nshort = \"aa\"\ndockerfile = \"b\"\n",
 			want: `share the short name "aa"`,
 		},
 		{
 			name: "no dockerfile",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\n",
-			want: `service "api" has no dockerfile`,
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\nname = \"api\"\n",
+			want: `image "api" has no dockerfile`,
 		},
 		{
 			name: "absolute dockerfile",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\ndockerfile = \"/etc/Dockerfile\"\n",
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"/etc/Dockerfile\"\n",
 			want: "must be relative to the build root",
 		},
 		{
 			name: "dockerfile escaping the root",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\ndockerfile = \"../other/Dockerfile\"\n",
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"../other/Dockerfile\"\n",
 			want: "escapes the build root",
 		},
 		{
 			name: "context escaping the root",
-			body: "[project]\nname = \"jjc2\"\n\n[[services]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\ncontext = \"..\"\n",
+			body: "[project]\nname = \"jjc2\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\ncontext = \"..\"\n",
 			want: "escapes the build root",
 		},
 	}
@@ -161,7 +161,7 @@ func TestValidateAllowsPathsThatReturn(t *testing.T) {
 [project]
 name = "jjc2"
 
-[[services]]
+[[images]]
 name = "api"
 dockerfile = "services/../services/api/Dockerfile"
 `)); err != nil {
@@ -226,11 +226,11 @@ func TestAbsPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := cfg.Services[0]
-	if want := filepath.Join(cfg.Root, "services/api/Dockerfile"); cfg.AbsDockerfile(svc) != want {
-		t.Errorf("AbsDockerfile = %q, want %q", cfg.AbsDockerfile(svc), want)
+	img := cfg.Images[0]
+	if want := filepath.Join(cfg.Root, "services/api/Dockerfile"); cfg.AbsDockerfile(img) != want {
+		t.Errorf("AbsDockerfile = %q, want %q", cfg.AbsDockerfile(img), want)
 	}
-	if cfg.AbsContext(svc) != cfg.Root {
-		t.Errorf("AbsContext = %q, want the build root %q", cfg.AbsContext(svc), cfg.Root)
+	if cfg.AbsContext(img) != cfg.Root {
+		t.Errorf("AbsContext = %q, want the build root %q", cfg.AbsContext(img), cfg.Root)
 	}
 }
