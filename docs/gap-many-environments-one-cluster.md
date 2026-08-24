@@ -69,6 +69,12 @@ is exactly the property the staging environment exists to avoid.
 There is no field to decouple the three. That coupling is the actual gap; the silent overwrite is how
 it presents.
 
+**And the coupling is a naming problem before it is a feature gap** — see
+[gap-vocabulary.md](gap-vocabulary.md). meimei has no word for the level it is missing: `Target` is
+holding the place an ECS service name would go, which is why "which service does `--to` point at?"
+answers "the cluster". Rename `[[services]]` to `[[images]]` and `[[targets]]` to `[[clusters]]` and
+the hole names itself.
+
 ## What is already right, and must not regress
 
 Checked while diagnosing this, because the obvious fix would be to start matching loosely:
