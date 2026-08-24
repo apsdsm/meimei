@@ -129,11 +129,22 @@ the map is built rather than after. `cmd/deploy.go` already resolves the reposit
 
 ## Until it lands
 
-The staging service can be stood up in Terraform and deployed by hand — `register-task-definition`
-with the image swapped, then `update-service` — which is what meimei does in four calls. That is
-acceptable for one operator who knows why, and not acceptable as the documented path for the person
-this staging environment is being built for.
+**The colliding second service has now been stood up, deliberately.** An earlier draft of this
+section said that must not happen while `meimei deploy` is still in use against the cluster. The call
+went the other way, and the reasoning is worth recording because it sets the priority of the fix:
 
-**What must not happen in the meantime is standing up a second service whose container shares
-production's name while `meimei deploy` is still in use against that cluster.** Until resolution is
-target-aware, that turns a correct-looking production deploy into a staging deploy, silently.
+`tc-public1-chatbot-stg` runs a container called `chatbot`, the same name production's carries. It was
+briefly named `chatbot-stg` to keep resolution unambiguous, and that was rejected on the grounds that
+it shapes infrastructure around a tool bug — staging exists to run the task definition production will
+run, and a container named for its environment makes the two differ in a field that has nothing to do
+with the environment. Nick's words: *"don't build in workarounds for meimei, if meimei isn't working
+right we fix meimei."*
+
+So the collision is live. `meimei deploy chatbot` against `tc-public1` will roll one of the two
+services and report a healthy rollout either way. **The interim path is not meimei**: the consuming
+repository deploys with `scripts/deploy.sh --service <name>`, which has no default and refuses to run
+without a target. That script is a stopgap whose whole purpose is to be deleted once resolution is
+target-aware, and it is documented as such in `jjc_manualchatbot/docs/container.md`.
+
+That makes this gap the thing blocking meimei from being usable against that cluster at all, rather
+than a limitation to plan around.

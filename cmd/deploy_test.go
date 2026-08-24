@@ -15,9 +15,9 @@ const where = "036558358799, ap-northeast-1"
 
 func noSuggestion(string) string { return "" }
 
-func finding(service, tag string, status registry.Status) registry.Finding {
+func finding(image, tag string, status registry.Status) registry.Finding {
 	return registry.Finding{
-		Ref:    registry.Ref{Name: service, Repo: "jjc2-" + service, Tag: tag},
+		Ref:    registry.Ref{Name: image, Repo: "jjc2-" + image, Tag: tag},
 		Status: status,
 	}
 }
@@ -55,7 +55,7 @@ func TestReviewReportsEveryMissingImageAtOnce(t *testing.T) {
 	if strings.Contains(got, "jjc2-sysadmin-web-spa") {
 		t.Errorf("message names an image that is present:\n%s", got)
 	}
-	// And it has to name the fix, with the services the operator typed rather
+	// And it has to name the fix, with the images the operator typed rather
 	// than the repositories they map to.
 	if !strings.Contains(got, "meimei build api user-web-spa --push") {
 		t.Errorf("message does not name the command to run:\n%s", got)

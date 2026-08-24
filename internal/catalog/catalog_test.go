@@ -81,7 +81,7 @@ func TestLoadBuildable(t *testing.T) {
 	}
 }
 
-// A missing Dockerfile marks one service broken and leaves the rest alone —
+// A missing Dockerfile marks one image broken and leaves the rest alone —
 // the whole reason it isn't a load error.
 func TestLoadMissingDockerfileIsPerService(t *testing.T) {
 	cfg := project(t, twoServices, "services/api/Dockerfile")
@@ -107,7 +107,7 @@ func TestLoadMissingDockerfileIsPerService(t *testing.T) {
 }
 
 func TestLoadDisabledIsNotInspected(t *testing.T) {
-	// No Dockerfile written: a disabled service is excluded by declaration, so
+	// No Dockerfile written: a disabled image is excluded by declaration, so
 	// its missing file must not be reported as a problem.
 	cfg := project(t, `
 [project]
@@ -125,7 +125,7 @@ disabled = true
 		t.Errorf("status = %v, want disabled", e.Status)
 	}
 	if e.Problem != "" {
-		t.Errorf("Problem = %q, want a disabled service to report none", e.Problem)
+		t.Errorf("Problem = %q, want a disabled image to report none", e.Problem)
 	}
 }
 
@@ -245,7 +245,7 @@ group = "api"
 func TestFindMissing(t *testing.T) {
 	cfg := project(t, twoServices, "services/api/Dockerfile", "services/web/Dockerfile")
 	if _, ok := Load(cfg, "").Find("nope"); ok {
-		t.Error("Find returned an entry for a service that isn't declared")
+		t.Error("Find returned an entry for an image that isn't declared")
 	}
 }
 
@@ -294,7 +294,7 @@ func TestLoadWithoutGit(t *testing.T) {
 		t.Errorf("Tag = %q, want empty without git", cat.Entries[0].Tag)
 	}
 	if cat.Entries[0].Status != Buildable {
-		t.Error("a service should still be buildable outside git")
+		t.Error("an image should still be buildable outside git")
 	}
 }
 

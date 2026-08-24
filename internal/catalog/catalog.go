@@ -14,7 +14,7 @@ import (
 	"github.com/apsdsm/meimei/internal/config"
 )
 
-// Status is whether a service's DEFINITION is sound — whether meimei could
+// Status is whether an image's DEFINITION is sound — whether meimei could
 // start a build for it at all. It is deliberately not a build state: what a
 // build is currently doing is a separate, moving axis that belongs to the
 // command running it, and overlaying the two here would mean the catalog could
@@ -25,7 +25,7 @@ const (
 	// Buildable: the definition resolves to a Dockerfile that is there.
 	Buildable Status = iota
 	// Broken: the config points at a Dockerfile that is not there. Almost
-	// always a path typo or a service that moved, and worth seeing beside its
+	// always a path typo or an image that moved, and worth seeing beside its
 	// working siblings rather than as a fatal error.
 	Broken
 	// Disabled: declared, deliberately excluded.
@@ -48,7 +48,7 @@ type Entry struct {
 	Image  config.Image
 	Status Status
 
-	// Repository is the image repository this service builds into.
+	// Repository is the ECR repository this image is pushed to.
 	Repository string
 	// Tag is the tag a build would produce right now. Empty without git.
 	Tag string
@@ -106,8 +106,8 @@ func Load(cfg *config.Config, label string) *Catalog {
 	return &Catalog{Config: cfg, Git: git, Label: label, Entries: entries}
 }
 
-// inspect classifies a service by what is actually on disk at its Dockerfile
-// path. A disabled service never gets here — it is excluded by declaration, so
+// inspect classifies an image by what is actually on disk at its Dockerfile
+// path. A disabled image never gets here — it is excluded by declaration, so
 // a missing file is not a problem worth reporting for it.
 func inspect(path string) (Status, string, Dockerfile) {
 	st, err := os.Stat(path)
@@ -134,10 +134,10 @@ func inspect(path string) (Status, string, Dockerfile) {
 }
 
 // Groups returns the entries arranged by their declared group, in first-seen
-// order, with ungrouped services last.
+// order, with ungrouped images last.
 //
 // First-seen rather than sorted: the config's order is the author's, and
-// related services are written together. Sorting would scatter them.
+// related images are written together. Sorting would scatter them.
 //
 // This is the repository's own organisation, not a deployment shape — see
 // config.Image.Group.
@@ -165,13 +165,13 @@ func (c *Catalog) Groups() []Group {
 	return groups
 }
 
-// Group is a named set of services, as this repository arranges them.
+// Group is a named set of images, as this repository arranges them.
 type Group struct {
 	Name    string
 	Entries []Entry
 }
 
-// Find returns the entry for a service by name.
+// Find returns the entry for an image by name.
 func (c *Catalog) Find(name string) (Entry, bool) {
 	for _, e := range c.Entries {
 		if e.Image.Name == name {

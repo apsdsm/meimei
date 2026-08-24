@@ -8,7 +8,7 @@ import (
 )
 
 // Dockerfile is the little meimei reads out of a Dockerfile: enough to say on
-// screen what a service is, without pretending to understand the build.
+// screen what an image is, without pretending to understand the build.
 //
 // This is a reader, not a parser — it recognises FROM and EXPOSE and ignores
 // everything else. Docker's own parser is the authority on what a Dockerfile
@@ -32,9 +32,9 @@ type Stage struct {
 // and tag stripped: "golang:1.25" -> "golang", "oven/bun:1" -> "bun".
 //
 // The FIRST stage, not the last, because that is the one that says what the
-// service is written in. The final stage is nearly always the same handful of
+// image is written in. The final stage is nearly always the same handful of
 // slim runtimes (alpine, distroless) and so tells you nothing that
-// distinguishes one service from another.
+// distinguishes one image from another.
 func (d Dockerfile) Base() string {
 	if len(d.Stages) == 0 {
 		return ""

@@ -19,9 +19,9 @@ import (
 // A flag cannot be given in the wrong order, and it says what it is at the call
 // site, which is also where anyone reading the shell history needs it.
 var buildCmd = &cobra.Command{
-	Use:   "build [service...]",
-	Short: "Build service container images",
-	Long: "Build one or more services, or every buildable service with --all.\n\n" +
+	Use:   "build [image...]",
+	Short: "Build container images",
+	Long: "Build one or more images, or every buildable image with --all.\n\n" +
 		"Images are tagged with --label if given, otherwise with the current commit as\n" +
 		"sha-<gitsha>.\n\n" +
 		"Nothing leaves this machine unless a destination is named. Without --push the\n" +
@@ -39,7 +39,7 @@ var buildCmd = &cobra.Command{
 }
 
 func init() {
-	buildCmd.Flags().Bool("all", false, "Build every buildable service")
+	buildCmd.Flags().Bool("all", false, "Build every buildable image")
 	buildCmd.Flags().String("label", "", "Tag images with this release or ticket id instead of the commit")
 	buildCmd.Flags().Bool("push", false, "Push to the registry after building")
 	buildCmd.Flags().String("platform", "", "Build for this platform instead of the host's (local builds only)")
@@ -114,7 +114,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		opts.Output = build.OutputPush
 		opts.RegistryHost = cfg.Registry.Host()
 		// A pushed image targets the config's platform, so the host's is only a
-		// fallback for services that declare none.
+		// fallback for images that declare none.
 		opts.Platform = cfg.Project.Platform
 		opts.Route = build.ChooseRoute(ctx, "", cfg.Project.Platform)
 	} else if opts.Platform == "" {
@@ -146,7 +146,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		if err := runPush(ctx, pc, cat, plans); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "\nPushed %d image(s) to %s\n", len(plans), cfg.Registry.Host())
+		fmt.Fprintf(os.Stderr, "\nPushed %s to %s\n", plural(len(plans), "image", "images"), cfg.Registry.Host())
 		return nil
 	}
 
@@ -163,6 +163,6 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\nBuilt %d image(s).\n", len(plans))
+	fmt.Fprintf(os.Stderr, "\nBuilt %s.\n", plural(len(plans), "image", "images"))
 	return nil
 }

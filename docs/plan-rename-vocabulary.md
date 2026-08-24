@@ -1,7 +1,7 @@
 # Rename plan: meimei's nouns to AWS's
 
 **Status:** in progress. Written 2026-08-24 from the finding in
-[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0-5 are done** — the next one is step 6, the user-facing sweep.
+[gap-vocabulary.md](gap-vocabulary.md); every decision is settled. **Steps 0-6 are done** — the next one is step 7, docs and the release.
 
 This is a rename plus a version gate. It fixes no bug — including the silent-overwrite bug in
 `byContainer`, which stays exactly as it is. Steps 1-5 change no behaviour at all; step 6 changes
@@ -195,7 +195,7 @@ updates [config-reference.md](config-reference.md) in the same commit** — step
 | 3 ✓ | `deploy.Task` → `deploy.Service`, `Tasks` → `Services`, `TaskFor` → `ServiceFor`, `TaskNamed` → `ServiceNamed`, and split `Service` → `Name` + `Family` with both assigned from `svc.ServiceName`. |
 | 4 ✓ | The leaf renames: `catalog.Entry.Service`, `build.Options.Services`, `build.Plan.Service`, `registry.Ref.Service`. |
 | 5 ✓ | The version gate: `ConfigVersion = 2` const, `Config.Version int` with `toml:"version"`, and the check in `LoadFrom` **before** `Validate`. Three tests — v2 loads, a file with no `version` is refused naming the two edits, `version = 3` is refused saying to upgrade. Every test fixture in the repo gains `version = 2`. **Reference doc: the `version` section and the two refusal messages.** |
-| 6 | The user-facing sweep — help text, error messages, `ls --json`'s `"services"` key, and the `(s)` plurals — against the canonical list in [terms.md](terms.md). Every string is listed in "Step 6 in full" below. |
+| 6 ✓ | The user-facing sweep — help text, error messages, `ls --json`'s `"services"` key, and the `(s)` plurals — against the canonical list in [terms.md](terms.md). Every string is listed in "Step 6 in full" below. |
 | 7 | Docs and release: `CLAUDE.md` (lines 44-48, 76-86, `Service.Group` → `Image.Group`, a pointer to `config-reference.md` from the "Where a fact lives" section, and its own prose swept against `terms.md` — it says "service" for an image throughout), `gap-vocabulary.md` (what was decided, and that `targets` is staying, with the reason), `gap-many-environments-one-cluster.md` (its "rename `[[services]]` … and the hole names itself" line is now done), `index.md`, `terms.md` if step 6 turned up a concept it does not list, and `config-reference.md`'s status table flipped to say version 2 is what the tool reads. Bump `cmd/version.go` to `1.1.0`, tag, push. `README.md` needs nothing — already flagged stale on this branch. |
 | 8 | Migrate `jjc2_main` and `jjc_manualchatbot`, after installing the tagged binary. |
 
