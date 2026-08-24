@@ -15,7 +15,10 @@ func project(t *testing.T, toml string, dockerfiles ...string) *config.Config {
 	root := t.TempDir()
 
 	path := filepath.Join(root, config.FileName)
-	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
+	// Every fixture gets the format version, so the fixtures below stay about
+	// what they are testing.
+	body := "version = 2\n" + toml
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, rel := range dockerfiles {
@@ -128,7 +131,8 @@ disabled = true
 
 func TestLoadFileWithoutFromIsBroken(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(`
+	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(`version = 2
+
 [project]
 name = "acme"
 

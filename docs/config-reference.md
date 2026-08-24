@@ -36,12 +36,12 @@ Three outcomes, all of them before any other validation:
 | no `version` key, or `version = 1` | refuses, naming the v1 → v2 edits |
 | `version = 3` or higher | refuses, saying to upgrade meimei |
 
-The refusals, as they should read:
+The refusals, verbatim:
 
 ```
-Error: .meimei.toml has no `version` key, so it is a version 1 file.
+Error: /home/nick/Code/acme_main/.meimei.toml: this file is version 1 (it has no version key)
 
-  meimei 1.1.0 reads version 2 only. Two edits:
+  meimei reads version 2 only. Two edits:
       add     version = 2      as the first line
       rename  [[services]]  →  [[images]]
 
@@ -49,10 +49,15 @@ Error: .meimei.toml has no `version` key, so it is a version 1 file.
 ```
 
 ```
-Error: .meimei.toml is version 3, and this meimei reads version 2.
+Error: /home/nick/Code/acme_main/.meimei.toml: this file is version 99, and this meimei reads version 2
 
   upgrade:  go install github.com/apsdsm/meimei@latest
 ```
+
+Both name the file by absolute path, which matters as soon as `--config` is in play — the file being
+refused is not always the one you would find by searching upwards. `version = 1` written explicitly
+gets the first message too, with "it says version = 1" in place of "it has no version key". Neither
+message hardcodes a meimei version, so neither goes stale.
 
 **Why a version key rather than sniffing for the old table name.** Sniffing answers "is this the file
 I expected" only for the changes already made. A version answers it for every change after this one,
