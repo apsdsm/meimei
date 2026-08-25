@@ -16,15 +16,6 @@ Still to build: `ls` grown into four subjects (`builds`, `images`, `targets`, `s
 TUI, and notifications. [docs/known-issues.md](docs/known-issues.md) lists what is wrong or missing
 in what does exist.
 
-**The released binary is older than this branch.** `go install …@latest` resolves `v1.0.0`, which
-reads a config with no `version` key and `[[services]]` tables, takes `--push`, `--label` and `--to`,
-and cannot address two environments in one cluster. Everything below documents this branch. Migrating
-a file to version 2 is three edits, listed at the end of
-[docs/config-reference.md](docs/config-reference.md).
-
-`v0.1.0` was a different tool — CodeDeploy, S3 bundles, a DynamoDB build catalogue, `.meimei.yaml`.
-Its code is gone.
-
 ## Install
 
 ```bash
@@ -95,15 +86,11 @@ cluster, which is right for a cluster carrying one environment.
 [docs/config-reference.md](docs/config-reference.md) documents every key, its default, and what AWS
 calls it.
 
-### Upgrading a file from the released shape
+### Older config files
 
-A file written for `v1.0.0` has no `version` key and uses `[[services]]`. This branch refuses it and
-names the three edits: add `version = 2` as the first line, rename `[[services]]` to `[[builds]]`,
-and add `repository` and `container` to every build. There is no backwards compatibility and none is
-planned — a binary reads one config version and refuses every other one by name.
-
-The migration reproduces the old behaviour exactly: `repository` is the old `project.name` + `-` +
-the build's name, and `container` is the build's name.
+A binary reads one config version and refuses every other one by name, naming the edits it needs.
+There is no backwards compatibility and none is planned. The migration from version 1 is at the end
+of [docs/config-reference.md](docs/config-reference.md).
 
 ## Commands
 

@@ -146,9 +146,8 @@ made. It cannot see a breaking change that *adds* a required key — `toml.Unmar
 does not know, so an old file missing a new key looks exactly like a new file whose author left it
 out.
 
-Config versions are independent of the binary version. Version 2 changed shape twice while
-unreleased, which was free; once a release carries a config version, changing that shape costs a
-version bump.
+Config versions are independent of the binary version. Version 2 is released, so the next breaking
+change to the file format is version 3.
 
 ## AWS through the SDK, docker through the CLI
 
