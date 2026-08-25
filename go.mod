@@ -2,6 +2,16 @@ module github.com/apsdsm/meimei
 
 go 1.25.5
 
+// Withdrawn: these versions carry real AWS account ids, a public IP and
+// internal product names in their source and docs. The content is still
+// served by proxy.golang.org, which is append-only, so this marks them
+// rather than removing them. Use v1.2.0 or later.
+retract (
+	v0.1.0
+	v1.0.0
+	v1.1.0
+)
+
 require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/spf13/cobra v1.9.1
