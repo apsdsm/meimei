@@ -15,7 +15,7 @@ import (
 // would leave `go install github.com/apsdsm/meimei@latest` on v0.1.0 — and
 // adding the suffix to a CLI nobody imports would be ceremony with a cost. The
 // v2 name stays what it has always been: the name of the rewrite.
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
