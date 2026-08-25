@@ -8,14 +8,6 @@ promotes them onto ECS.
   <img src="meimei.jpeg" alt="meimei" width="400">
 </p>
 
-## Status
-
-`meimei ls`, `meimei build` and `meimei deploy` work. Config format version 2.
-
-Still to build: `ls` grown into four subjects (`builds`, `images`, `targets`, `services`), then the
-TUI, and notifications. [docs/known-issues.md](docs/known-issues.md) lists what is wrong or missing
-in what does exist.
-
 ## Install
 
 ```bash
