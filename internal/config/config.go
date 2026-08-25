@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -45,7 +46,7 @@ type Config struct {
 	Version int `toml:"version"`
 
 	Project  Project   `toml:"project"`
-	Images   []Image   `toml:"images"`
+	Builds   []Build   `toml:"builds"`
 	Registry *Registry `toml:"registry"`
 	Targets  []Target  `toml:"targets"`
 
@@ -57,15 +58,17 @@ type Config struct {
 
 // Project is the repo-wide header.
 type Project struct {
-	// Name prefixes every image repository: service "api" in project "jjc2"
-	// builds jjc2-api. It is the `PRODUCT` of the shell scripts.
+	// Name is a label for this repository, used in output. It names NOTHING in
+	// AWS: every AWS identifier is declared, never composed from parts, so a
+	// project can be called anything without deciding what a repository is
+	// called.
 	Name string `toml:"name"`
 
 	// Region is the AWS region. Unused while meimei only reads local state,
 	// but it belongs to the project rather than to any one command.
 	Region string `toml:"region"`
 
-	// Platform is the default build platform for every service.
+	// Platform is the default build platform for every build.
 	Platform string `toml:"platform"`
 }
 
@@ -86,20 +89,13 @@ type Registry struct {
 	Region string `toml:"region"`
 }
 
-// Target is somewhere images get deployed to.
+// Target is somewhere images get deployed to: a cluster, and a scope inside it.
 //
-// It holds only what cannot be discovered: which account and ECS cluster a
-// target name refers to, and how to authenticate. Which task definition each
-// image is packed into is NOT here — that is a per-cluster Terraform decision,
-// read from the cluster at deploy time.
-//
-// NOTHING HERE NAMES THE ECS SERVICE. A deploy back-infers it by asking every
-// service in the cluster which containers it carries and matching on the
-// container name, which works only while container names are unique across the
-// whole cluster. Two environments of one image in one cluster break that
-// silently — see docs/gap-many-environments-one-cluster.md — and the field that
-// fixes it goes here, which is why this stays `Target` rather than becoming
-// `Cluster`: a target is about to be a cluster plus a scope inside it.
+// It holds only what cannot be discovered — which account and ECS cluster a
+// target name refers to, which of that cluster's services are this target's,
+// and how to authenticate. What is IN each service is NOT here: which build is
+// packed into which task definition is a per-cluster decision, read from the
+// cluster at deploy time.
 type Target struct {
 	// Name is what you type: `--to dev1`. A local label with no counterpart in
 	// AWS.
@@ -119,14 +115,59 @@ type Target struct {
 
 	// Region defaults to the project's.
 	Region string `toml:"region"`
+
+	// Services are the ECS services in this target's scope, by exact name.
+	//
+	// This is the one fact about a deploy that cannot be discovered: ECS has no
+	// notion of an environment, so nothing on the cluster says which of its
+	// services are production and which are staging.
+	//
+	// A SCOPE, not an instruction. Naming three services here does not make a
+	// deploy roll three services — it makes those three the only ones a build
+	// may resolve against. Which of them roll is decided by the builds named on
+	// the command line.
+	//
+	// Empty means every service on the cluster, which is right for a cluster
+	// with one environment on it. Two targets naming disjoint services in one
+	// cluster is how a staging service beside production is addressed.
+	Services []string `toml:"services"`
+
+	// Timeout is how long a rollout is followed before giving up, as a Go
+	// duration ("10m"). It belongs to the target rather than to an invocation:
+	// a slow production service wants a different value from dev1, and the
+	// value does not change between two deploys to the same place.
+	//
+	// A string because TOML has no duration type. Empty means
+	// deploy.DefaultTimeout, which is why this does not hold a time.Duration —
+	// zero would be indistinguishable from "not set".
+	Timeout string `toml:"timeout"`
 }
 
-// Image is one buildable container image.
-type Image struct {
-	// Name is the image's identity everywhere: the ECR repository suffix, the
-	// container name inside its ECS task definition, and what you type at the
-	// CLI.
+// Build is one buildable container image, and the two AWS names it is
+// deployed under.
+type Build struct {
+	// Name is meimei's own label for this build: what you type at the CLI and
+	// what appears in output. It names NOTHING in AWS and is free to be
+	// anything — Repository and Container carry the AWS-facing names.
 	Name string `toml:"name"`
+
+	// Repository is the ECR repository this build is pushed to, exactly as it
+	// is named in ECR. Required.
+	//
+	// Declared rather than composed from project and build names. A name
+	// computed from parts is a footgun: it cannot be used on a repository that
+	// does not happen to match the convention, and an error about it has to
+	// explain a derivation instead of naming a string. meimei never creates a
+	// repository, so this is always a name that already exists.
+	Repository string `toml:"repository"`
+
+	// Container is the name of the container definition inside the ECS task
+	// definition that runs this build. Required, and matched exactly.
+	//
+	// Not defaulted to Name for the same reason Repository is not composed: a
+	// default is a derivation with a friendlier face, and it would put the
+	// footgun back for exactly the projects that do not follow the convention.
+	Container string `toml:"container"`
 
 	// Short is an optional abbreviation, for a future keyboard shortcut.
 	Short string `toml:"short"`
@@ -140,7 +181,7 @@ type Image struct {
 	// replace, the web workspace's shared install).
 	Context string `toml:"context"`
 
-	// Group is how THIS REPOSITORY organises its images — "api", "web",
+	// Group is how THIS REPOSITORY organises its builds — "api", "web",
 	// "worker" — and is used only to arrange them on screen. It says nothing
 	// about how they are deployed.
 	//
@@ -156,14 +197,14 @@ type Image struct {
 	// deployed to.
 	Group string `toml:"group"`
 
-	// Platform overrides Project.Platform for this image alone.
+	// Platform overrides Project.Platform for this build alone.
 	Platform string `toml:"platform"`
 
-	// Color is the accent used for this image's name on screen.
+	// Color is the accent used for this build's name on screen.
 	Color string `toml:"color"`
 
-	// Disabled keeps an image in the file but out of every build. An image that
-	// is being brought up, or one that has been retired but whose definition is
+	// Disabled keeps a build in the file but out of every run. One that is
+	// being brought up, or one that has been retired but whose definition is
 	// not ready to delete, is better declared than forgotten.
 	Disabled bool `toml:"disabled"`
 }
@@ -206,12 +247,12 @@ func LoadFrom(path string) (*Config, error) {
 	if cfg.Project.Platform == "" {
 		cfg.Project.Platform = DefaultPlatform
 	}
-	for i := range cfg.Images {
-		if cfg.Images[i].Platform == "" {
-			cfg.Images[i].Platform = cfg.Project.Platform
+	for i := range cfg.Builds {
+		if cfg.Builds[i].Platform == "" {
+			cfg.Builds[i].Platform = cfg.Project.Platform
 		}
-		if cfg.Images[i].Context == "" {
-			cfg.Images[i].Context = "."
+		if cfg.Builds[i].Context == "" {
+			cfg.Builds[i].Context = "."
 		}
 	}
 
@@ -236,47 +277,60 @@ func LoadFrom(path string) (*Config, error) {
 // Dockerfile actually exists is deliberately NOT checked here: that is a fact
 // about the working tree, it changes between branches, and reporting it as a
 // load failure would mean a single missing file stops you seeing the other four
-// images. The catalog reports it per image instead.
+// builds. The catalog reports it per build instead.
 func (c *Config) Validate() error {
 	if c.Project.Name == "" {
-		return fmt.Errorf("project.name is required (it prefixes every image repository)")
+		return fmt.Errorf("project.name is required (it labels this repository in output)")
 	}
-	if len(c.Images) == 0 {
-		return fmt.Errorf("no images defined")
+	if len(c.Builds) == 0 {
+		return fmt.Errorf("no builds defined")
 	}
 
-	seen := make(map[string]bool, len(c.Images))
-	shorts := make(map[string]string, len(c.Images))
-	for i, img := range c.Images {
-		if img.Name == "" {
-			return fmt.Errorf("images[%d] has no name", i)
+	seen := make(map[string]bool, len(c.Builds))
+	shorts := make(map[string]string, len(c.Builds))
+	for i, b := range c.Builds {
+		if b.Name == "" {
+			return fmt.Errorf("builds[%d] has no name", i)
 		}
-		if seen[img.Name] {
-			return fmt.Errorf("duplicate image %q", img.Name)
+		if seen[b.Name] {
+			return fmt.Errorf("duplicate build %q", b.Name)
 		}
-		seen[img.Name] = true
+		seen[b.Name] = true
 
-		if img.Short != "" {
-			if prev, clash := shorts[img.Short]; clash {
-				return fmt.Errorf("images %q and %q share the short name %q", prev, img.Name, img.Short)
+		// Required, and never derived from the build's name. Two builds MAY
+		// share a repository — that is how one image reaches two environments
+		// under different container names — so there is no uniqueness check
+		// here.
+		if b.Repository == "" {
+			return fmt.Errorf("build %q has no repository (the ECR repository name, "+
+				"declared exactly — meimei does not compose one from project and build names)", b.Name)
+		}
+		if b.Container == "" {
+			return fmt.Errorf("build %q has no container (the name of its container definition "+
+				"in the ECS task definition, matched exactly)", b.Name)
+		}
+
+		if b.Short != "" {
+			if prev, clash := shorts[b.Short]; clash {
+				return fmt.Errorf("builds %q and %q share the short name %q", prev, b.Name, b.Short)
 			}
-			shorts[img.Short] = img.Name
+			shorts[b.Short] = b.Name
 		}
 
-		if img.Dockerfile == "" {
-			return fmt.Errorf("image %q has no dockerfile", img.Name)
+		if b.Dockerfile == "" {
+			return fmt.Errorf("build %q has no dockerfile", b.Name)
 		}
-		if filepath.IsAbs(img.Dockerfile) {
-			return fmt.Errorf("image %q: dockerfile must be relative to the build root, got %q", img.Name, img.Dockerfile)
+		if filepath.IsAbs(b.Dockerfile) {
+			return fmt.Errorf("build %q: dockerfile must be relative to the build root, got %q", b.Name, b.Dockerfile)
 		}
-		if escapes(img.Dockerfile) {
-			return fmt.Errorf("image %q: dockerfile %q escapes the build root", img.Name, img.Dockerfile)
+		if escapes(b.Dockerfile) {
+			return fmt.Errorf("build %q: dockerfile %q escapes the build root", b.Name, b.Dockerfile)
 		}
-		if filepath.IsAbs(img.Context) {
-			return fmt.Errorf("image %q: context must be relative to the build root, got %q", img.Name, img.Context)
+		if filepath.IsAbs(b.Context) {
+			return fmt.Errorf("build %q: context must be relative to the build root, got %q", b.Name, b.Context)
 		}
-		if escapes(img.Context) {
-			return fmt.Errorf("image %q: context %q escapes the build root", img.Name, img.Context)
+		if escapes(b.Context) {
+			return fmt.Errorf("build %q: context %q escapes the build root", b.Name, b.Context)
 		}
 	}
 	return c.validateRegistryAndTargets()
@@ -318,20 +372,14 @@ func escapes(rel string) bool {
 	return clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
-// AbsDockerfile is the image's Dockerfile as an absolute path.
-func (c *Config) AbsDockerfile(i Image) string {
-	return filepath.Join(c.Root, i.Dockerfile)
+// AbsDockerfile is the build's Dockerfile as an absolute path.
+func (c *Config) AbsDockerfile(b Build) string {
+	return filepath.Join(c.Root, b.Dockerfile)
 }
 
-// AbsContext is the image's build context as an absolute path.
-func (c *Config) AbsContext(i Image) string {
-	return filepath.Join(c.Root, i.Context)
-}
-
-// Repository is the ECR repository name for an image: project-image, the same
-// derivation the shell scripts use (`${PRODUCT}-${SERVICE}`).
-func (c *Config) Repository(i Image) string {
-	return c.Project.Name + "-" + i.Name
+// AbsContext is the build's docker context as an absolute path.
+func (c *Config) AbsContext(b Build) string {
+	return filepath.Join(c.Root, b.Context)
 }
 
 // validateRegistryAndTargets checks the deployment half of the file. Called
@@ -367,8 +415,43 @@ func (c *Config) validateRegistryAndTargets() error {
 		if t.Region == "" {
 			return fmt.Errorf("target %q has no region (set it, or project.region)", t.Name)
 		}
+
+		svcSeen := make(map[string]bool, len(t.Services))
+		for j, svc := range t.Services {
+			if svc == "" {
+				return fmt.Errorf("target %q: services[%d] is empty", t.Name, j)
+			}
+			if svcSeen[svc] {
+				return fmt.Errorf("target %q lists the service %q twice", t.Name, svc)
+			}
+			svcSeen[svc] = true
+		}
+
+		if _, err := t.FollowTimeout(0); err != nil {
+			return fmt.Errorf("target %q: %w", t.Name, err)
+		}
 	}
 	return nil
+}
+
+// FollowTimeout is how long a rollout on this target is followed, falling back
+// to def when the target says nothing.
+//
+// Parsed rather than stored as a duration because TOML has no duration type,
+// and returning the error means Validate can reject "10 minutes" at load rather
+// than at the end of a deploy.
+func (t Target) FollowTimeout(def time.Duration) (time.Duration, error) {
+	if t.Timeout == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(t.Timeout)
+	if err != nil {
+		return 0, fmt.Errorf("timeout %q is not a duration (try \"10m\")", t.Timeout)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("timeout %q must be positive", t.Timeout)
+	}
+	return d, nil
 }
 
 // RegistryHost is the ECR registry hostname images are pushed to.
@@ -436,10 +519,13 @@ func checkVersion(v int) error {
 	// key existed looks like. Same edits either way.
 	default:
 		return fmt.Errorf("this file is version 1 (%s)\n\n"+
-			"  meimei reads version %d only. Two edits:\n"+
+			"  meimei reads version %d only. Three edits:\n"+
 			"      add     version = %d      as the first line\n"+
-			"      rename  [[services]]  →  [[images]]\n\n"+
-			"  nothing else in the file changes.",
+			"      rename  [[services]]  →  [[builds]]\n"+
+			"      add     repository and container to every [[builds]]\n\n"+
+			"  repository is the ECR repository this build is pushed to, and container the\n"+
+			"  name of its container definition in the ECS task definition. Both are declared\n"+
+			"  exactly: meimei no longer composes either from the project and build names.",
 			versionSaid(v), ConfigVersion, ConfigVersion)
 	}
 }

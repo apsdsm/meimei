@@ -54,15 +54,15 @@ func ReadGit(dir string) Git {
 	return g
 }
 
-// Tag is the image tag a build would produce for the given label.
+// Tag is the image tag a build would produce, given a tag the caller named.
 //
-// A label (a release id or a ticket) is used verbatim; otherwise the build is
-// tagged by commit. The "sha-" prefix is reserved for commit tags so that ECR's
-// keep-last-N-sha lifecycle rule can never sweep a release — which is also why
-// a label starting with "sha-" is rejected at build time.
-func (g Git) Tag(label string) string {
-	if label != "" {
-		return label
+// A named tag (a release id or a ticket) is used verbatim; otherwise the build
+// is tagged by commit. The "sha-" prefix is reserved for commit tags so that
+// ECR's keep-last-N-sha lifecycle rule can never sweep a release — which is
+// also why a tag starting with "sha-" is rejected at build time.
+func (g Git) Tag(named string) string {
+	if named != "" {
+		return named
 	}
 	if g.SHA == "" {
 		return ""

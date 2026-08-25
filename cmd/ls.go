@@ -14,8 +14,8 @@ import (
 
 var lsCmd = &cobra.Command{
 	Use:   "ls",
-	Short: "List the images this project can build",
-	Long: "List every image declared in " + ".meimei.toml" + ", what it builds from,\n" +
+	Short: "List the builds this project declares",
+	Long: "List every build declared in " + ".meimei.toml" + ", what it builds from,\n" +
 		"and the image a build would produce right now.\n\n" +
 		"Reads only the working tree — no docker daemon, no AWS, no credentials.",
 	Args: cobra.NoArgs,
@@ -24,7 +24,6 @@ var lsCmd = &cobra.Command{
 
 func init() {
 	lsCmd.Flags().Bool("json", false, "Emit machine-readable JSON")
-	lsCmd.Flags().String("label", "", "Resolve tags against a release or ticket label instead of the commit")
 	rootCmd.AddCommand(lsCmd)
 }
 
@@ -34,8 +33,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	label, _ := cmd.Flags().GetString("label")
-	cat := catalog.Load(cfg, label)
+	cat := catalog.Load(cfg, "")
 
 	asJSON, _ := cmd.Flags().GetBool("json")
 	if asJSON {
@@ -47,7 +45,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 	// this command is the pre-flight for a build, and a script gating on it
 	// cannot read the ✕ on screen.
 	if _, broken, _ := cat.Counts(); broken > 0 {
-		return fmt.Errorf("%s cannot be built", plural(broken, "image", "images"))
+		return fmt.Errorf("%s cannot be built", plural(broken, "build", "builds"))
 	}
 	return nil
 }
@@ -67,8 +65,8 @@ func emitText(cat *catalog.Catalog) {
 	switch {
 	case !cat.Git.Available:
 		fmt.Println("no git — a build cannot be tagged by commit")
-	case cat.Label != "":
-		fmt.Printf("label %s\n", cat.Label)
+	case cat.Tag != "":
+		fmt.Printf("tag %s\n", cat.Tag)
 	case cat.Git.Dirty:
 		fmt.Printf("tag %s — working tree is dirty, an image built now matches no commit\n", cat.Git.Tag(""))
 	default:
@@ -80,7 +78,7 @@ func emitText(cat *catalog.Catalog) {
 
 	for _, e := range cat.Entries {
 		if e.Problem != "" {
-			fmt.Printf("✕ %s: %s\n", e.Image.Name, e.Problem)
+			fmt.Printf("✕ %s: %s\n", e.Build.Name, e.Problem)
 		}
 	}
 }
@@ -105,7 +103,7 @@ func renderTable(cat *catalog.Catalog) string {
 		fmt.Fprintf(w, "%s\t\t\t\n", name)
 		for _, e := range group.Entries {
 			fmt.Fprintf(w, "  %s %s\t%s\t%s\t%s\n",
-				glyph(e.Status), e.Image.Name, detail(e), image(cat, e), e.Image.Dockerfile)
+				glyph(e.Status), e.Build.Name, detail(e), image(cat, e), e.Build.Dockerfile)
 		}
 		fmt.Fprint(w, "\t\t\t\n")
 	}
@@ -162,6 +160,7 @@ type jsonEntry struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Repository string `json:"repository"`
+	Container  string `json:"container"`
 	Tag        string `json:"tag,omitempty"`
 	Image      string `json:"image,omitempty"`
 	Group      string `json:"group,omitempty"`
@@ -179,9 +178,8 @@ type jsonOutput struct {
 	Root    string      `json:"root"`
 	Region  string      `json:"region,omitempty"`
 	Tag     string      `json:"tag,omitempty"`
-	Label   string      `json:"label,omitempty"`
 	Dirty   bool        `json:"dirty"`
-	Images  []jsonEntry `json:"images"`
+	Builds  []jsonEntry `json:"builds"`
 }
 
 func emitJSON(cat *catalog.Catalog) error {
@@ -189,20 +187,20 @@ func emitJSON(cat *catalog.Catalog) error {
 		Project: cat.Config.Project.Name,
 		Root:    cat.Config.Root,
 		Region:  cat.Config.Project.Region,
-		Tag:     cat.Git.Tag(cat.Label),
-		Label:   cat.Label,
+		Tag:     cat.Git.Tag(cat.Tag),
 		Dirty:   cat.Git.Dirty,
 	}
 	for _, e := range cat.Entries {
 		je := jsonEntry{
-			Name:       e.Image.Name,
+			Name:       e.Build.Name,
 			Status:     e.Status.String(),
 			Repository: e.Repository,
+			Container:  e.Build.Container,
 			Tag:        e.Tag,
-			Group:      e.Image.Group,
-			Dockerfile: e.Image.Dockerfile,
-			Context:    e.Image.Context,
-			Platform:   e.Image.Platform,
+			Group:      e.Build.Group,
+			Dockerfile: e.Build.Dockerfile,
+			Context:    e.Build.Context,
+			Platform:   e.Build.Platform,
 			Base:       e.Info.Base(),
 			Stages:     len(e.Info.Stages),
 			Expose:     e.Info.Expose,
@@ -211,7 +209,7 @@ func emitJSON(cat *catalog.Catalog) error {
 		if e.Tag != "" {
 			je.Image = e.Repository + ":" + e.Tag
 		}
-		out.Images = append(out.Images, je)
+		out.Builds = append(out.Builds, je)
 	}
 
 	enc := json.NewEncoder(os.Stdout)

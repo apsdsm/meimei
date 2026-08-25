@@ -42,13 +42,17 @@ const twoServices = `
 [project]
 name = "jjc2"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "services/api/Dockerfile"
 group = "api"
 
-[[images]]
+[[builds]]
 name = "user-web"
+repository = "p-user-web"
+container = "user-web"
 dockerfile = "services/web/Dockerfile"
 group = "web"
 `
@@ -62,7 +66,7 @@ func TestLoadBuildable(t *testing.T) {
 	}
 	for _, e := range cat.Entries {
 		if e.Status != Buildable {
-			t.Errorf("%s: status = %v (%s), want buildable", e.Image.Name, e.Status, e.Problem)
+			t.Errorf("%s: status = %v (%s), want buildable", e.Build.Name, e.Status, e.Problem)
 		}
 	}
 
@@ -70,8 +74,14 @@ func TestLoadBuildable(t *testing.T) {
 	if !ok {
 		t.Fatal("Find(api) found nothing")
 	}
-	if api.Repository != "jjc2-api" {
-		t.Errorf("Repository = %q, want jjc2-api", api.Repository)
+	// Copied from the build's declaration, never composed from the project and
+	// build names — the fixture deliberately declares "p-api" under a project
+	// called "jjc2" so a reappearing derivation would fail here.
+	if api.Repository != "p-api" {
+		t.Errorf("Repository = %q, want the declared p-api", api.Repository)
+	}
+	if api.Build.Container != "api" {
+		t.Errorf("Container = %q, want the declared api", api.Build.Container)
 	}
 	if api.Info.Base() != "golang" {
 		t.Errorf("Base = %q, want golang", api.Info.Base())
@@ -113,8 +123,10 @@ func TestLoadDisabledIsNotInspected(t *testing.T) {
 [project]
 name = "jjc2"
 
-[[images]]
+[[builds]]
 name = "retired"
+repository = "p-retired"
+container = "retired"
 dockerfile = "services/gone/Dockerfile"
 disabled = true
 `)
@@ -136,8 +148,10 @@ func TestLoadFileWithoutFromIsBroken(t *testing.T) {
 [project]
 name = "jjc2"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "Dockerfile"
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -162,8 +176,10 @@ func TestLoadDirectoryAtDockerfilePathIsBroken(t *testing.T) {
 [project]
 name = "jjc2"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "services/api/Dockerfile"
 `)
 	if err := os.MkdirAll(filepath.Join(cfg.Root, "services/api/Dockerfile"), 0o755); err != nil {
@@ -181,18 +197,24 @@ func TestGroupsAreInFirstSeenOrder(t *testing.T) {
 [project]
 name = "jjc2"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 group = "api"
 
-[[images]]
+[[builds]]
 name = "user-web"
+repository = "p-user-web"
+container = "user-web"
 dockerfile = "b/Dockerfile"
 group = "web"
 
-[[images]]
+[[builds]]
 name = "process-runner"
+repository = "p-process-runner"
+container = "process-runner"
 dockerfile = "c/Dockerfile"
 group = "api"
 `, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
@@ -208,8 +230,8 @@ group = "api"
 	if len(groups[0].Entries) != 2 {
 		t.Errorf("group api has %d entries, want 2", len(groups[0].Entries))
 	}
-	if groups[0].Entries[1].Image.Name != "process-runner" {
-		t.Errorf("second entry in api = %q, want process-runner", groups[0].Entries[1].Image.Name)
+	if groups[0].Entries[1].Build.Name != "process-runner" {
+		t.Errorf("second entry in api = %q, want process-runner", groups[0].Entries[1].Build.Name)
 	}
 }
 
@@ -220,12 +242,16 @@ func TestGroupsPutUngroupedLast(t *testing.T) {
 [project]
 name = "jjc2"
 
-[[images]]
+[[builds]]
 name = "docs"
+repository = "p-docs"
+container = "docs"
 dockerfile = "a/Dockerfile"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "b/Dockerfile"
 group = "api"
 `, "a/Dockerfile", "b/Dockerfile")
@@ -249,14 +275,14 @@ func TestFindMissing(t *testing.T) {
 	}
 }
 
-// A label is used verbatim as the tag; without one the build is tagged by
-// commit under the reserved sha- prefix.
-func TestLabelOverridesTheCommitTag(t *testing.T) {
+// A named tag is used verbatim; without one the build is tagged by commit under
+// the reserved sha- prefix.
+func TestNamedTagOverridesTheCommitTag(t *testing.T) {
 	cfg := project(t, twoServices, "services/api/Dockerfile", "services/web/Dockerfile")
 
 	cat := Load(cfg, "jjc2.2026_010.001")
 	if cat.Entries[0].Tag != "jjc2.2026_010.001" {
-		t.Errorf("Tag = %q, want the label verbatim", cat.Entries[0].Tag)
+		t.Errorf("Tag = %q, want the named tag verbatim", cat.Entries[0].Tag)
 	}
 }
 
@@ -264,18 +290,18 @@ func TestGitTag(t *testing.T) {
 	cases := []struct {
 		name  string
 		git   Git
-		label string
+		named string
 		want  string
 	}{
 		{"commit", Git{SHA: "abc1234", Available: true}, "", "sha-abc1234"},
-		{"label wins", Git{SHA: "abc1234", Available: true}, "rel.001", "rel.001"},
-		{"no git, no label", Git{}, "", ""},
-		{"no git, label still tags", Git{}, "rel.001", "rel.001"},
+		{"named tag wins", Git{SHA: "abc1234", Available: true}, "rel.001", "rel.001"},
+		{"no git, no tag", Git{}, "", ""},
+		{"no git, a named tag still tags", Git{}, "rel.001", "rel.001"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.git.Tag(tc.label); got != tc.want {
-				t.Errorf("Tag(%q) = %q, want %q", tc.label, got, tc.want)
+			if got := tc.git.Tag(tc.named); got != tc.want {
+				t.Errorf("Tag(%q) = %q, want %q", tc.named, got, tc.want)
 			}
 		})
 	}
