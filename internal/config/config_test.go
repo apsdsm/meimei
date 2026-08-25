@@ -30,8 +30,10 @@ const minimal = `
 [project]
 name = "acme"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "acme-api"
+container = "api"
 dockerfile = "services/api/Dockerfile"
 `
 
@@ -49,41 +51,96 @@ func TestLoadFromDefaults(t *testing.T) {
 	if cfg.Project.Platform != DefaultPlatform {
 		t.Errorf("Project.Platform = %q, want the default %q", cfg.Project.Platform, DefaultPlatform)
 	}
-	img := cfg.Images[0]
-	if img.Platform != DefaultPlatform {
-		t.Errorf("image Platform = %q, want it inherited from the project", img.Platform)
+	b := cfg.Builds[0]
+	if b.Platform != DefaultPlatform {
+		t.Errorf("build Platform = %q, want it inherited from the project", b.Platform)
 	}
-	if img.Context != "." {
-		t.Errorf("image Context = %q, want the build root", img.Context)
+	if b.Context != "." {
+		t.Errorf("build Context = %q, want the build root", b.Context)
 	}
-	if got := cfg.Repository(img); got != "acme-api" {
-		t.Errorf("Repository = %q, want acme-api", got)
+	if b.Repository != "acme-api" {
+		t.Errorf("Repository = %q, want the declared acme-api", b.Repository)
+	}
+	if b.Container != "api" {
+		t.Errorf("Container = %q, want the declared api", b.Container)
 	}
 }
 
-func TestServicePlatformOverridesProject(t *testing.T) {
+// The repository is whatever the file says, with no relationship to the project
+// or build names. This is the whole point of declaring it: a project called
+// anything can push to a repository called anything.
+func TestRepositoryIsNotComposed(t *testing.T) {
+	cfg, err := LoadFrom(write(t, `
+[project]
+name = "acme"
+
+[[builds]]
+name = "app"
+repository = "totally-unrelated"
+container = "web"
+dockerfile = "a/Dockerfile"
+`))
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := cfg.Builds[0].Repository; got != "totally-unrelated" {
+		t.Errorf("Repository = %q, want it taken verbatim from the file", got)
+	}
+	if got := cfg.Builds[0].Container; got != "web" {
+		t.Errorf("Container = %q, want it taken verbatim from the file", got)
+	}
+}
+
+// Two builds may share a repository: that is one image reaching two
+// environments under different container names.
+func TestTwoBuildsMayShareARepository(t *testing.T) {
+	if _, err := LoadFrom(write(t, `
+[project]
+name = "tc"
+
+[[builds]]
+name = "chatbot"
+repository = "nova-chatbot"
+container = "chatbot"
+dockerfile = "a/Dockerfile"
+
+[[builds]]
+name = "chatbot-stg"
+repository = "nova-chatbot"
+container = "chatbot-stg"
+dockerfile = "a/Dockerfile"
+`)); err != nil {
+		t.Errorf("LoadFrom: %v", err)
+	}
+}
+
+func TestBuildPlatformOverridesProject(t *testing.T) {
 	cfg, err := LoadFrom(write(t, `
 [project]
 name = "acme"
 platform = "linux/arm64"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "acme-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 
-[[images]]
+[[builds]]
 name = "legacy"
+repository = "acme-legacy"
+container = "legacy"
 dockerfile = "b/Dockerfile"
 platform = "linux/amd64"
 `))
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
 	}
-	if cfg.Images[0].Platform != "linux/arm64" {
-		t.Errorf("api platform = %q, want the project default", cfg.Images[0].Platform)
+	if cfg.Builds[0].Platform != "linux/arm64" {
+		t.Errorf("api platform = %q, want the project default", cfg.Builds[0].Platform)
 	}
-	if cfg.Images[1].Platform != "linux/amd64" {
-		t.Errorf("legacy platform = %q, want its own override", cfg.Images[1].Platform)
+	if cfg.Builds[1].Platform != "linux/amd64" {
+		t.Errorf("legacy platform = %q, want its own override", cfg.Builds[1].Platform)
 	}
 }
 
@@ -104,47 +161,57 @@ func TestValidateRejects(t *testing.T) {
 	}{
 		{
 			name: "no project name",
-			body: "[[images]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\n",
+			body: "[[builds]]\nname = \"api\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"a/Dockerfile\"\n",
 			want: "project.name is required",
 		},
 		{
-			name: "no images",
+			name: "no builds",
 			body: "[project]\nname = \"acme\"\n",
-			want: "no images defined",
+			want: "no builds defined",
 		},
 		{
-			name: "image without a name",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\ndockerfile = \"a/Dockerfile\"\n",
-			want: "images[0] has no name",
+			name: "build without a name",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"a/Dockerfile\"\n",
+			want: "builds[0] has no name",
 		},
 		{
-			name: "duplicate image",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"a\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"b\"\n",
-			want: `duplicate image "api"`,
+			name: "build without a repository",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\ncontainer = \"c\"\ndockerfile = \"a/Dockerfile\"\n",
+			want: `build "api" has no repository`,
+		},
+		{
+			name: "build without a container",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r\"\ndockerfile = \"a/Dockerfile\"\n",
+			want: `build "api" has no container`,
+		},
+		{
+			name: "duplicate build",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"a\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r2\"\ncontainer = \"c2\"\ndockerfile = \"b\"\n",
+			want: `duplicate build "api"`,
 		},
 		{
 			name: "clashing shorts",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\nname = \"api\"\nshort = \"aa\"\ndockerfile = \"a\"\n\n[[images]]\nname = \"web\"\nshort = \"aa\"\ndockerfile = \"b\"\n",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nshort = \"aa\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"a\"\n\n[[builds]]\nname = \"web\"\nshort = \"aa\"\nrepository = \"r2\"\ncontainer = \"c2\"\ndockerfile = \"b\"\n",
 			want: `share the short name "aa"`,
 		},
 		{
 			name: "no dockerfile",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\nname = \"api\"\n",
-			want: `image "api" has no dockerfile`,
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r\"\ncontainer = \"c\"\n",
+			want: `build "api" has no dockerfile`,
 		},
 		{
 			name: "absolute dockerfile",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"/etc/Dockerfile\"\n",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"/etc/Dockerfile\"\n",
 			want: "must be relative to the build root",
 		},
 		{
 			name: "dockerfile escaping the root",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"../other/Dockerfile\"\n",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"../other/Dockerfile\"\n",
 			want: "escapes the build root",
 		},
 		{
 			name: "context escaping the root",
-			body: "[project]\nname = \"acme\"\n\n[[images]]\nname = \"api\"\ndockerfile = \"a/Dockerfile\"\ncontext = \"..\"\n",
+			body: "[project]\nname = \"acme\"\n\n[[builds]]\nname = \"api\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"a/Dockerfile\"\ncontext = \"..\"\n",
 			want: "escapes the build root",
 		},
 	}
@@ -169,8 +236,10 @@ func TestValidateAllowsPathsThatReturn(t *testing.T) {
 [project]
 name = "acme"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "acme-api"
+container = "api"
 dockerfile = "services/../services/api/Dockerfile"
 `)); err != nil {
 		t.Errorf("LoadFrom: %v", err)
@@ -234,12 +303,12 @@ func TestAbsPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img := cfg.Images[0]
-	if want := filepath.Join(cfg.Root, "services/api/Dockerfile"); cfg.AbsDockerfile(img) != want {
-		t.Errorf("AbsDockerfile = %q, want %q", cfg.AbsDockerfile(img), want)
+	b := cfg.Builds[0]
+	if want := filepath.Join(cfg.Root, "services/api/Dockerfile"); cfg.AbsDockerfile(b) != want {
+		t.Errorf("AbsDockerfile = %q, want %q", cfg.AbsDockerfile(b), want)
 	}
-	if cfg.AbsContext(img) != cfg.Root {
-		t.Errorf("AbsContext = %q, want the build root %q", cfg.AbsContext(img), cfg.Root)
+	if cfg.AbsContext(b) != cfg.Root {
+		t.Errorf("AbsContext = %q, want the build root %q", cfg.AbsContext(b), cfg.Root)
 	}
 }
 
@@ -247,7 +316,7 @@ func TestAbsPaths(t *testing.T) {
 // mismatch have to say what to do: an older file needs editing, a newer one
 // needs a newer meimei. A v1 file is the case that matters most, because
 // [[services]] decodes into nothing and the honest-looking failure would be
-// "no images defined" — true, and no help at all.
+// "no builds defined" — true, and no help at all.
 
 func TestVersionTwoLoads(t *testing.T) {
 	cfg, err := LoadFrom(writeRaw(t, "version = 2\n"+minimal))
@@ -267,13 +336,13 @@ func TestVersionOneIsRefusedWithTheEdits(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadFrom succeeded, want a refusal")
 	}
-	for _, want := range []string{"version 1", "version = 2", "[[images]]"} {
+	for _, want := range []string{"version 1", "version = 2", "[[builds]]", "repository", "container"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
 		}
 	}
 	// The failure a version check exists to prevent.
-	if strings.Contains(err.Error(), "no images defined") {
+	if strings.Contains(err.Error(), "no builds defined") {
 		t.Errorf("refused as an empty file rather than a v1 file:\n%v", err)
 	}
 }

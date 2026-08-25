@@ -18,33 +18,33 @@ import (
 )
 
 var deployCmd = &cobra.Command{
-	Use:   "deploy [image...]",
-	Short: "Promote images onto a target's ECS cluster",
+	Use:   "deploy [name...]",
+	Short: "Promote images onto a target's ECS services",
 	Long: "Point a target's ECS services at a different image.\n\n" +
-		"A deploy copies the task definition Terraform registered, swaps the image on the\n" +
+		"A deploy copies the task definition that is registered, swaps the image on the\n" +
 		"named containers, registers the result and rolls the ECS service. It never\n" +
-		"changes anything else about the task definition — Terraform owns the shape.\n\n" +
-		"Which images are packed into which task definition is read from the cluster,\n" +
-		"never from config: an ECS service's name is its task definition family, and its\n" +
-		"container names are the images it carries. Images sharing a task definition are\n" +
-		"promoted in ONE revision and ONE rollout, which is also the only thing that\n" +
-		"works on a cluster brought up fresh, where no task can start until every image\n" +
-		"in its definition is real.",
+		"changes anything else about the task definition — whatever manages your\n" +
+		"infrastructure owns the shape.\n\n" +
+		"A target names which of its cluster's ECS services it addresses, so two targets\n" +
+		"may point into one cluster. What is IN each service is read from the cluster and\n" +
+		"never from config: the container names in a service's newest revision are the\n" +
+		"builds it carries. Builds sharing a task definition are promoted in ONE revision\n" +
+		"and ONE rollout, which is also the only thing that works on a cluster brought up\n" +
+		"fresh, where no task can start until every image in its definition is real.",
 	Example: "  meimei deploy chatbot --tag sha-eba96de\n" +
-		"  meimei deploy --all --tag acme.2026_010.001 --to dev1\n" +
-		"  meimei deploy api --tag sha-abc1234 --to dev1 --dry-run",
+		"  meimei deploy --all --tag acme.2026_010.001 --target dev1\n" +
+		"  meimei deploy api --tag sha-abc1234 --target dev1 --dry-run",
 	RunE: runDeploy,
 }
 
 func init() {
-	deployCmd.Flags().Bool("all", false, "Deploy every image this repo declares")
+	deployCmd.Flags().Bool("all", false, "Deploy everything in this target's scope")
 	deployCmd.Flags().String("tag", "", "Image tag to promote (default: the current commit)")
-	deployCmd.Flags().String("to", "", "Target to deploy to (optional when the project declares one)")
+	deployCmd.Flags().String("target", "", "Target to deploy to (optional when the project declares one)")
 	deployCmd.Flags().Bool("no-follow", false, "Trigger the rollout and return without waiting")
 	deployCmd.Flags().Bool("dry-run", false, "Print what would be promoted, and change nothing")
 	deployCmd.Flags().Bool("skip-image-check", false,
 		"Promote without asking the registry whether the images are there")
-	deployCmd.Flags().Duration("timeout", deploy.DefaultTimeout, "How long to follow a rollout before giving up")
 	rootCmd.AddCommand(deployCmd)
 }
 
@@ -59,22 +59,25 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	all, _ := cmd.Flags().GetBool("all")
 	tag, _ := cmd.Flags().GetString("tag")
-	to, _ := cmd.Flags().GetString("to")
+	to, _ := cmd.Flags().GetString("target")
 	noFollow, _ := cmd.Flags().GetBool("no-follow")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	skipCheck, _ := cmd.Flags().GetBool("skip-image-check")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
 
 	target, err := cfg.ResolveTarget(to)
 	if err != nil {
 		return err
 	}
 
-	cat := catalog.Load(cfg, "")
-	images, err := selectImages(cat, args, all)
+	// How long to follow a rollout belongs to the target: a slow production
+	// service wants a different value from dev1, and it does not change between
+	// two deploys to the same place. Validate has already checked it parses.
+	timeout, err := target.FollowTimeout(deploy.DefaultTimeout)
 	if err != nil {
 		return err
 	}
+
+	cat := catalog.Load(cfg, "")
 
 	// No tag means "what this checkout is", which is the common case right
 	// after a build. It is never inferred from the registry — deploying
@@ -94,9 +97,17 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	client := deploy.New(sess, target.Cluster)
+	client := deploy.New(sess, target.Cluster, target.Services)
 
 	packing, err := client.Discover(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Selection needs the packing, because --all means everything in THIS
+	// TARGET'S scope rather than everything the repository declares. A build
+	// this repo can make but this target does not run is not part of "all" here.
+	builds, err := selectBuilds(cat, packing, args, all)
 	if err != nil {
 		return err
 	}
@@ -113,11 +124,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	byFamily := map[string]*work{}
 	var refs []registry.Ref
 
-	for _, name := range images {
-		svc, ok := packing.ServiceFor(name)
+	for _, e := range builds {
+		svc, ok := packing.ServiceFor(e.Build.Container)
 		if !ok {
-			return fmt.Errorf("no container %q on cluster %s — it runs %s",
-				name, target.Cluster, strings.Join(packing.Containers(), ", "))
+			return fmt.Errorf("build %q wants a container named %q, and target %s does not run one — "+
+				"its scope has %s",
+				e.Build.Name, e.Build.Container, target.Name, strings.Join(packing.Containers(), ", "))
 		}
 		w, seen := byFamily[svc.Family]
 		if !seen {
@@ -125,11 +137,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			byFamily[svc.Family] = w
 			order = append(order, svc.Family)
 		}
-		repo := cfg.Project.Name + "-" + name
-		refs = append(refs, registry.Ref{Name: name, Repo: repo, Tag: tag})
+		// The repository is the build's own declaration, never composed from
+		// the project and build names.
+		refs = append(refs, registry.Ref{Name: e.Build.Name, Repo: e.Repository, Tag: tag})
 		w.swaps = append(w.swaps, deploy.Swap{
-			Container: name,
-			Image:     cfg.Registry.ImageURI(repo, tag),
+			Container: e.Build.Container,
+			Image:     cfg.Registry.ImageURI(e.Repository, tag),
 		})
 	}
 
@@ -220,48 +233,61 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// selectImages picks which of the repo's images to deploy. It deliberately
-// mirrors the build selection rather than sharing it: deploying is about what
-// this repo declares, and an image with no Dockerfile here may still be
-// running on the cluster.
-func selectImages(cat *catalog.Catalog, names []string, all bool) ([]string, error) {
+// selectBuilds picks which of the repo's builds to deploy.
+//
+// It deliberately mirrors the build selection rather than sharing it: a build
+// whose Dockerfile is missing here may still be running on the cluster, and
+// deploying it is legitimate.
+//
+// --all means every build THIS TARGET RUNS, not every build the repository
+// declares. On a cluster mid-migration those differ in both directions, and a
+// repo-wide --all used to fail partway through a multi-service deploy with a
+// per-container error, after earlier services had already rolled.
+func selectBuilds(cat *catalog.Catalog, p *deploy.Packing, names []string, all bool) ([]catalog.Entry, error) {
 	if all && len(names) > 0 {
-		return nil, fmt.Errorf("--all cannot be combined with an image name")
+		return nil, fmt.Errorf("--all cannot be combined with a build name")
 	}
 	if !all && len(names) == 0 {
-		return nil, fmt.Errorf("no image named (name one or more images, or pass --all)")
+		return nil, fmt.Errorf("no build named (name one or more builds, or pass --all)")
 	}
 
 	if all {
-		var out []string
+		var out []catalog.Entry
 		for _, e := range cat.Entries {
-			if e.Status != catalog.Disabled {
-				out = append(out, e.Image.Name)
+			if e.Status == catalog.Disabled {
+				continue
 			}
+			if _, ok := p.ServiceFor(e.Build.Container); !ok {
+				continue
+			}
+			out = append(out, e)
 		}
 		if len(out) == 0 {
-			return nil, fmt.Errorf("nothing to deploy: every image is disabled")
+			return nil, fmt.Errorf("nothing to deploy: no build this repo declares runs on this target "+
+				"(it runs %s)", strings.Join(p.Containers(), ", "))
 		}
 		return out, nil
 	}
 
-	var out, unknown []string
+	var out []catalog.Entry
+	var unknown []string
 	seen := map[string]bool{}
 	for _, n := range names {
 		if seen[n] {
 			continue
 		}
 		seen[n] = true
-		if _, ok := cat.Find(n); !ok {
+		e, ok := cat.Find(n)
+		if !ok {
 			unknown = append(unknown, n)
 			continue
 		}
-		out = append(out, n)
+		out = append(out, e)
 	}
 	if len(unknown) > 0 {
 		var known []string
 		for _, e := range cat.Entries {
-			known = append(known, e.Image.Name)
+			known = append(known, e.Build.Name)
 		}
 		sort.Strings(known)
 		return nil, fmt.Errorf("unknown: %s (known: %s)",
@@ -390,7 +416,7 @@ func reviewFindings(
 		for _, f := range missing {
 			names = append(names, f.Name)
 		}
-		fmt.Fprintf(&b, "\n\n  build and push first:\n      meimei build %s --push\n",
+		fmt.Fprintf(&b, "\n\n  build it first:\n      meimei build %s\n",
 			strings.Join(names, " "))
 
 		if alt := suggest(missing[0].Repo); alt != "" {

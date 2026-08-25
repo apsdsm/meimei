@@ -57,7 +57,7 @@ func TestReviewReportsEveryMissingImageAtOnce(t *testing.T) {
 	}
 	// And it has to name the fix, with the images the operator typed rather
 	// than the repositories they map to.
-	if !strings.Contains(got, "meimei build api user-web-spa --push") {
+	if !strings.Contains(got, "meimei build api user-web-spa") {
 		t.Errorf("message does not name the command to run:\n%s", got)
 	}
 	if !strings.Contains(got, "nothing was changed") {

@@ -59,23 +59,29 @@ const threeServices = `
 [project]
 name = "acme"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "acme-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 
-[[images]]
+[[builds]]
 name = "user-web"
+repository = "acme-user-web"
+container = "user-web"
 dockerfile = "b/Dockerfile"
 
-[[images]]
+[[builds]]
 name = "retired"
+repository = "acme-retired"
+container = "retired"
 dockerfile = "c/Dockerfile"
 disabled = true
 `
 
-func opts(images ...string) Options {
+func opts(builds ...string) Options {
 	return Options{
-		Images:   images,
+		Builds:   builds,
 		Platform: "linux/arm64",
 		Now:      stamp,
 		Output:   OutputLoad,
@@ -236,7 +242,7 @@ func TestResolveLabelTagsVerbatim(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
 
 	o := opts("api")
-	o.Label = "acme.2026_010.001"
+	o.Tag = "acme.2026_010.001"
 	plans, err := Resolve(cat, o)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -257,7 +263,7 @@ func TestResolveWithoutGitOrLabelRefuses(t *testing.T) {
 
 	// A label is enough on its own, though.
 	o := opts("api")
-	o.Label = "manual.001"
+	o.Tag = "manual.001"
 	if _, err := Resolve(cat, o); err != nil {
 		t.Errorf("a label should be sufficient without git: %v", err)
 	}
@@ -289,7 +295,7 @@ func TestOCILabels(t *testing.T) {
 	}
 
 	o := opts("api")
-	o.Label = "rel.001"
+	o.Tag = "rel.001"
 	plans, _ = Resolve(cat, o)
 	if !strings.Contains(strings.Join(plans[0].Labels, " "), "org.opencontainers.image.version=rel.001") {
 		t.Errorf("labels = %v, want the version label for a labelled build", plans[0].Labels)
@@ -313,7 +319,7 @@ func TestResolveHandsTheTagToTheBuild(t *testing.T) {
 	// It follows the tag, so a labelled build reports the label rather than the
 	// commit — the same string the image is tagged with, whichever it is.
 	o := opts("api")
-	o.Label = "rel.001"
+	o.Tag = "rel.001"
 	plans, err = Resolve(cat, o)
 	if err != nil {
 		t.Fatal(err)
@@ -326,41 +332,59 @@ func TestResolveHandsTheTagToTheBuild(t *testing.T) {
 	}
 }
 
-// A local build targets the machine doing the building, whatever the config
-// says — an image for another architecture cannot be run here.
-func TestLocalBuildIgnoresServicePlatform(t *testing.T) {
+// A --no-push build targets the platform the config declares, not the host's.
+//
+// It is a diagnostic, and it is only worth running if it builds the thing a
+// push would have sent. The cost is that on an x86 host the resulting arm64
+// image will not run locally without emulation, which is accepted: --no-push
+// answers "does this build", not "give me something to run".
+func TestNoPushBuildStillTargetsTheConfiguredPlatform(t *testing.T) {
 	cat := fixture(t, `
 [project]
 name = "acme"
 platform = "linux/arm64"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "acme-api"
+container = "api"
 dockerfile = "a/Dockerfile"
-`, "a/Dockerfile")
 
-	o := opts("api")
-	o.Platform = "linux/amd64" // what the host is
+[[builds]]
+name = "legacy"
+repository = "acme-legacy"
+container = "legacy"
+dockerfile = "b/Dockerfile"
+platform = "linux/amd64"
+`, "a/Dockerfile", "b/Dockerfile")
+
+	o := opts("api", "legacy")
+	o.Platform = "linux/arm64" // the config's, which is what the caller passes now
+	o.Output = OutputLoad
 	plans, err := Resolve(cat, o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plans[0].Platform != "linux/amd64" {
-		t.Errorf("Platform = %q, want the host's for a --load build", plans[0].Platform)
+	if plans[0].Platform != "linux/arm64" {
+		t.Errorf("api platform = %q, want the project's even with --no-push", plans[0].Platform)
+	}
+	// A build's own override still wins, exactly as it does on the push path.
+	if plans[1].Platform != "linux/amd64" {
+		t.Errorf("legacy platform = %q, want its own override even with --no-push", plans[1].Platform)
 	}
 }
 
-func TestValidateLabel(t *testing.T) {
+func TestValidateTag(t *testing.T) {
 	valid := []string{"", "acme.2026_010.001", "ENJJC-12.001", "v1", "a", strings.Repeat("x", 128)}
-	for _, l := range valid {
-		if err := ValidateLabel(l); err != nil {
-			t.Errorf("ValidateLabel(%q) = %v, want nil", l, err)
+	for _, tag := range valid {
+		if err := ValidateTag(tag); err != nil {
+			t.Errorf("ValidateTag(%q) = %v, want nil", tag, err)
 		}
 	}
 
 	invalid := []struct {
-		label string
-		why   string
+		tag string
+		why string
 	}{
 		{"-leading-hyphen", "must start with a letter or digit"},
 		{".leading-dot", "must start with a letter or digit"},
@@ -371,8 +395,8 @@ func TestValidateLabel(t *testing.T) {
 		{"sha-anything", "the reserved commit-tag prefix"},
 	}
 	for _, tc := range invalid {
-		if err := ValidateLabel(tc.label); err == nil {
-			t.Errorf("ValidateLabel(%q) = nil, want an error (%s)", tc.label, tc.why)
+		if err := ValidateTag(tc.tag); err == nil {
+			t.Errorf("ValidateTag(%q) = nil, want an error (%s)", tc.tag, tc.why)
 		}
 	}
 }
@@ -381,7 +405,7 @@ func TestValidateLabel(t *testing.T) {
 // be swept by the registry's keep-last-N-commit-images lifecycle rule, taking
 // away an image a live task definition still points at.
 func TestReservedPrefixErrorExplainsItself(t *testing.T) {
-	err := ValidateLabel("sha-deadbee")
+	err := ValidateTag("sha-deadbee")
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -421,8 +445,10 @@ func TestPushUsesConfiguredPlatform(t *testing.T) {
 name = "acme"
 platform = "linux/arm64"
 
-[[images]]
+[[builds]]
 name = "api"
+repository = "acme-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 `, "a/Dockerfile")
 

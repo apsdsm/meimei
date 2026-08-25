@@ -20,9 +20,15 @@
 // live on acme dev1 before the Deployable/Running split below.
 //
 // What is packed into which task definition is read from the cluster, never from
-// config. An ECS service's name is its task definition family, and the container
-// names inside it are the images it carries. That is a per-cluster Terraform
-// decision, so a copy in config would be a mirror that drifts.
+// config: the container names inside a service's newest revision are the builds
+// it carries. That is a per-cluster Terraform decision, so a copy in config
+// would be a mirror that drifts.
+//
+// WHICH services are this target's is the opposite kind of fact, and it is
+// declared. ECS has no notion of an environment, so nothing on the cluster says
+// which of its services are production and which are staging. A target names
+// them, and resolution is scoped to that list before any container name is
+// matched.
 package deploy
 
 import (
@@ -38,15 +44,22 @@ import (
 	"github.com/apsdsm/meimei/internal/awsx"
 )
 
-// Client is an ECS cluster meimei can deploy to.
+// Client is one target: an ECS cluster, and the services in it this target
+// addresses.
 type Client struct {
 	ecs     *ecs.Client
 	cluster string
+
+	// scope is the target's declared ECS service names. Empty means every
+	// service on the cluster, which is right for a cluster carrying one
+	// environment.
+	scope []string
 }
 
-// New builds a client from an already-verified session.
-func New(s *awsx.Session, cluster string) *Client {
-	return &Client{ecs: ecs.NewFromConfig(s.Config), cluster: cluster}
+// New builds a client from an already-verified session. scope is the target's
+// declared ECS services; nil or empty means the whole cluster.
+func New(s *awsx.Session, cluster string, scope []string) *Client {
+	return &Client{ecs: ecs.NewFromConfig(s.Config), cluster: cluster, scope: scope}
 }
 
 // Service is one ECS service on the cluster, and the containers it runs.
@@ -55,10 +68,12 @@ type Service struct {
 	// its task definition family, which RegisterTaskDefinition is called
 	// against.
 	//
-	// They are the same string in every cluster we run, because the Terraform
-	// here names both from one variable. That is a convention, NOT something
-	// ECS requires, so they are two fields: a deploy needs both, and anywhere
-	// the convention does not hold meimei needs to have kept them apart.
+	// Both are READ, neither is derived. Name comes from DescribeServices;
+	// Family is parsed out of the task definition ARN that same call returns,
+	// which is where ECS itself states it. They are the same string in every
+	// cluster we run, because the Terraform here names both from one variable —
+	// but that is a convention, not something ECS requires, and meimei no
+	// longer relies on it.
 	Name   string
 	Family string
 
@@ -108,12 +123,14 @@ func (s *Service) Leaving() []string {
 type Packing struct {
 	Services []Service
 
-	// byContainer maps a container name to the service carrying it.
+	// byContainer maps a container name to the service carrying it, WITHIN this
+	// target's scope.
 	//
-	// Flat and cluster-wide, so a container name appearing on two services
-	// silently keeps only the alphabetically last one. That is the gap in
-	// docs/gap-many-environments-one-cluster.md, left exactly as it is until
-	// Target can name the services a deploy is scoped to.
+	// Scoped, not cluster-wide: two services in one cluster may carry a
+	// container of the same name, which is what a staging service beside
+	// production looks like, and the target says which of them is this one. A
+	// collision inside one scope is a hard error rather than a silent
+	// last-writer-wins — see Discover.
 	byContainer map[string]*Service
 }
 
@@ -135,8 +152,8 @@ func (p *Packing) ServiceWithFamily(family string) (*Service, bool) {
 	return nil, false
 }
 
-// Containers lists every container name on the cluster, sorted — the answer to
-// "what can I actually deploy here".
+// Containers lists every container name in this target's scope, sorted — the
+// answer to "what can I actually deploy here".
 func (p *Packing) Containers() []string {
 	var out []string
 	for name := range p.byContainer {
@@ -146,41 +163,50 @@ func (p *Packing) Containers() []string {
 	return out
 }
 
-// Discover reads the cluster's current packing.
+// Discover reads this target's current packing.
+//
+// Scope first, then match. With a declared scope, exactly those services are
+// described and nothing else on the cluster is looked at; without one, every
+// service on the cluster is in scope.
 func (c *Client) Discover(ctx context.Context) (*Packing, error) {
-	var arns []string
-	pager := ecs.NewListServicesPaginator(c.ecs, &ecs.ListServicesInput{Cluster: &c.cluster})
-	for pager.HasMorePages() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("listing services on %s: %w", c.cluster, err)
-		}
-		arns = append(arns, page.ServiceArns...)
-	}
-	if len(arns) == 0 {
-		return nil, fmt.Errorf("cluster %q has no services (is the name right, and has Terraform been applied?)", c.cluster)
+	names, err := c.inScope(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	p := &Packing{byContainer: map[string]*Service{}}
+	var found []Service
 
 	// DescribeServices takes at most ten at a time.
-	for start := 0; start < len(arns); start += 10 {
-		end := min(start+10, len(arns))
+	for start := 0; start < len(names); start += 10 {
+		end := min(start+10, len(names))
+		batch := names[start:end]
 		out, err := c.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
 			Cluster:  &c.cluster,
-			Services: arns[start:end],
+			Services: batch,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("describing services on %s: %w", c.cluster, err)
 		}
+		// A service the target names and the cluster does not have comes back
+		// as a failure rather than an error. Naming it is the whole point:
+		// silently deploying to the rest would be deploying to a target that is
+		// not the one that was declared.
+		if len(c.scope) > 0 {
+			if err := describeFailures(out.Failures, c.cluster); err != nil {
+				return nil, err
+			}
+		}
 		for _, awsSvc := range out.Services {
 			name := aws.ToString(awsSvc.ServiceName)
 
-			// The service name is also the task definition family, which is a
-			// Terraform convention here rather than an ECS rule. Recorded as
-			// two fields so the day it stops holding is a compile-time
-			// question and not a silent one.
-			family := name
+			// The family is READ, out of the task definition ARN the service is
+			// pointed at, because that is where ECS states it. It is equal to
+			// the service name under the Terraform convention here, but nothing
+			// depends on that any more.
+			family, err := familyFromARN(aws.ToString(awsSvc.TaskDefinition))
+			if err != nil {
+				return nil, fmt.Errorf("service %s on %s: %w", name, c.cluster, err)
+			}
 
 			// The family resolves to the newest revision. This is the one that
 			// decides what can be deployed, because it is the one Promote
@@ -212,17 +238,132 @@ func (c *Client) Discover(ctx context.Context) (*Packing, error) {
 				s.RunningContainers = containerNamesInOrder(running.ContainerDefinitions)
 			}
 
-			p.Services = append(p.Services, s)
+			found = append(found, s)
 		}
 	}
 
-	sort.Slice(p.Services, func(i, j int) bool { return p.Services[i].Name < p.Services[j].Name })
+	return NewPacking(found, c.cluster, len(c.scope) > 0)
+}
+
+// NewPacking indexes a scope's services by the containers they carry.
+//
+// Pure, and separate from Discover for that reason: the rule that has actually
+// caused trouble is what happens when two services carry the same container
+// name, and it is worth having under test without an ECS client. scoped says
+// whether the target declared its services, which changes only the advice in
+// the refusal.
+func NewPacking(services []Service, cluster string, scoped bool) (*Packing, error) {
+	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+
+	p := &Packing{Services: services, byContainer: make(map[string]*Service, len(services))}
 	for i := range p.Services {
 		for _, container := range p.Services[i].Containers {
+			if prev, clash := p.byContainer[container]; clash {
+				return nil, ambiguous(container, cluster, prev.Name, p.Services[i].Name, scoped)
+			}
 			p.byContainer[container] = &p.Services[i]
 		}
 	}
 	return p, nil
+}
+
+// inScope lists the ECS services this target addresses, by name.
+func (c *Client) inScope(ctx context.Context) ([]string, error) {
+	if len(c.scope) > 0 {
+		return c.scope, nil
+	}
+
+	var arns []string
+	pager := ecs.NewListServicesPaginator(c.ecs, &ecs.ListServicesInput{Cluster: &c.cluster})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing services on %s: %w", c.cluster, err)
+		}
+		arns = append(arns, page.ServiceArns...)
+	}
+	if len(arns) == 0 {
+		return nil, fmt.Errorf("cluster %q has no services (is the name right, and has the "+
+			"infrastructure been applied?)", c.cluster)
+	}
+	return arns, nil
+}
+
+// describeFailures turns DescribeServices' per-service failures into one error
+// naming every service the target declared and the cluster does not have.
+func describeFailures(failures []ecstypes.Failure, cluster string) error {
+	var missing []string
+	for _, f := range failures {
+		name := aws.ToString(f.Arn)
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+		missing = append(missing, fmt.Sprintf("%s (%s)", name, aws.ToString(f.Reason)))
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("cluster %s does not have %s named by this target: %s",
+		cluster, plural(len(missing), "the service", "the services"), strings.Join(missing, ", "))
+}
+
+// ambiguous refuses a container name carried by two services in one scope.
+//
+// It is a refusal rather than a choice because there is no correct choice: both
+// services are this target's, and a deploy naming that container cannot say
+// which was meant. Before scoping existed this overwrote silently and the
+// alphabetically last service won, which rolled the wrong environment and
+// reported success.
+func ambiguous(container, cluster, a, b string, scoped bool) error {
+	if scoped {
+		return fmt.Errorf("container %q is on two services this target names, %s and %s — "+
+			"a deploy naming it cannot say which one you mean.\n"+
+			"       Two services in one target's scope must not carry the same container name; "+
+			"split them across two targets, or drop one from this target's `services`.",
+			container, a, b)
+	}
+	return fmt.Errorf("container %q is on two services in cluster %s, %s and %s — "+
+		"a deploy naming it cannot say which one you mean.\n\n"+
+		"       This target has no `services`, so its scope is the whole cluster. Name the ECS\n"+
+		"       services each target addresses to separate them:\n\n"+
+		"           [[targets]]\n"+
+		"           name     = \"...\"\n"+
+		"           cluster  = %q\n"+
+		"           services = [%q]\n",
+		container, cluster, a, b, cluster, a)
+}
+
+// familyFromARN pulls the task definition family out of the reference a service
+// is pointed at: arn:aws:ecs:<region>:<acct>:task-definition/<family>:<revision>.
+//
+// Read rather than assumed equal to the service name. The two are the same
+// string under the Terraform convention in these repos, but ECS does not
+// require it, and a cluster built by hand is free to pair them however it likes.
+func familyFromARN(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("has no task definition")
+	}
+	rest := ref
+	if i := strings.LastIndex(rest, "/"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	if i := strings.LastIndex(rest, ":"); i >= 0 {
+		rest = rest[:i]
+	}
+	if rest == "" {
+		return "", fmt.Errorf("task definition %q has no family in it", ref)
+	}
+	return rest, nil
+}
+
+// plural picks a form. Duplicated from cmd rather than exported from it: this
+// package must not import the command layer.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func (c *Client) describeTaskDefinition(ctx context.Context, ref string) (*ecstypes.TaskDefinition, error) {
