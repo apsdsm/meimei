@@ -13,7 +13,7 @@ import (
 
 func samplePlan() Plan {
 	return Plan{
-		Service:    "api",
+		Name:       "api",
 		Image:      "acme-api:sha-abc1234",
 		Repository: "acme-api",
 		Tag:        "sha-abc1234",
@@ -134,10 +134,10 @@ func TestRunReportsFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error for a non-zero exit")
 	}
-	// The service has to be named: with several builds in a run, "exit status
+	// The image has to be named: with several builds in a run, "exit status
 	// 3" on its own says nothing about which one.
 	if !strings.Contains(err.Error(), "api") {
-		t.Errorf("error = %q, want it to name the service", err)
+		t.Errorf("error = %q, want it to name the image", err)
 	}
 }
 

@@ -189,7 +189,7 @@ func (c *Client) Follow(ctx context.Context, service, taskDefARN string, opts Fo
 			return nil
 		}
 		if failed {
-			return fmt.Errorf("rollout failed (%d task(s) failed): %s",
+			return fmt.Errorf("rollout failed (failed tasks: %d): %s",
 				p.Failed, c.whyStopped(ctx, service, p.Event))
 		}
 		if time.Since(start) >= opts.Timeout {

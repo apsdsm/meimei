@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const withTargets = `
@@ -10,8 +11,10 @@ const withTargets = `
 name = "tc"
 region = "ap-northeast-1"
 
-[[services]]
+[[builds]]
 name = "chatbot"
+repository = "nova-chatbot"
+container = "chatbot"
 dockerfile = "Dockerfile"
 
 [registry]
@@ -109,7 +112,7 @@ func TestNoTargets(t *testing.T) {
 }
 
 func TestRegistryAndTargetValidation(t *testing.T) {
-	base := "[project]\nname = \"tc\"\nregion = \"ap-northeast-1\"\n\n[[services]]\nname = \"a\"\ndockerfile = \"D\"\n"
+	base := "[project]\nname = \"tc\"\nregion = \"ap-northeast-1\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n"
 	cases := []struct{ name, body, want string }{
 		{"registry without account", base + "[registry]\nprofile = \"p\"\n", "registry.account is required"},
 		{"target without cluster", base + "[[targets]]\nname = \"t\"\naccount = \"1\"\n", "has no cluster"},
@@ -132,8 +135,104 @@ func TestRegistryAndTargetValidation(t *testing.T) {
 
 // A region has to come from somewhere; project.region is the usual source.
 func TestRegistryNeedsARegion(t *testing.T) {
-	_, err := LoadFrom(write(t, "[project]\nname = \"tc\"\n\n[[services]]\nname = \"a\"\ndockerfile = \"D\"\n\n[registry]\naccount = \"1\"\n"))
+	_, err := LoadFrom(write(t, "[project]\nname = \"tc\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n\n[registry]\naccount = \"1\"\n"))
 	if err == nil || !strings.Contains(err.Error(), "region") {
 		t.Errorf("err = %v, want a complaint about the missing region", err)
+	}
+}
+
+// A target's services are exact names and its own scope. Two targets in one
+// cluster naming different services is the arrangement the field exists for.
+func TestTargetServicesAreDeclared(t *testing.T) {
+	cfg, err := LoadFrom(write(t, `
+[project]
+name = "tc"
+region = "ap-northeast-1"
+
+[[builds]]
+name = "chatbot"
+repository = "nova-chatbot"
+container = "chatbot"
+dockerfile = "D"
+
+[[targets]]
+name = "prod"
+account = "1"
+profile = "p"
+cluster = "nova-public1"
+services = ["nova-public1-chatbot"]
+
+[[targets]]
+name = "stg"
+account = "1"
+profile = "p"
+cluster = "nova-public1"
+services = ["nova-public1-chatbot-stg"]
+timeout = "15m"
+`))
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := cfg.Targets[0].Services; len(got) != 1 || got[0] != "nova-public1-chatbot" {
+		t.Errorf("prod services = %v, want the one declared name", got)
+	}
+	if cfg.Targets[0].Cluster != cfg.Targets[1].Cluster {
+		t.Fatal("the fixture is meant to put both targets in one cluster")
+	}
+
+	// Omitted means the whole cluster, which is what every file written before
+	// the field looked like.
+	d, err := cfg.Targets[0].FollowTimeout(defaultForTest)
+	if err != nil {
+		t.Fatalf("FollowTimeout: %v", err)
+	}
+	if d != defaultForTest {
+		t.Errorf("prod timeout = %s, want the default when unset", d)
+	}
+	d, err = cfg.Targets[1].FollowTimeout(defaultForTest)
+	if err != nil {
+		t.Fatalf("FollowTimeout: %v", err)
+	}
+	if d != 15*time.Minute {
+		t.Errorf("stg timeout = %s, want its own 15m", d)
+	}
+}
+
+const defaultForTest = 10 * time.Minute
+
+func TestTargetRejects(t *testing.T) {
+	base := "[project]\nname = \"tc\"\nregion = \"r\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n"
+	cases := []struct{ name, body, want string }{
+		{
+			"duplicate service in one target",
+			base + "\n[[targets]]\nname = \"t\"\naccount = \"1\"\ncluster = \"c\"\nservices = [\"s\", \"s\"]\n",
+			`lists the service "s" twice`,
+		},
+		{
+			"empty service name",
+			base + "\n[[targets]]\nname = \"t\"\naccount = \"1\"\ncluster = \"c\"\nservices = [\"\"]\n",
+			"services[0] is empty",
+		},
+		{
+			"unparseable timeout",
+			base + "\n[[targets]]\nname = \"t\"\naccount = \"1\"\ncluster = \"c\"\ntimeout = \"10 minutes\"\n",
+			"is not a duration",
+		},
+		{
+			"negative timeout",
+			base + "\n[[targets]]\nname = \"t\"\naccount = \"1\"\ncluster = \"c\"\ntimeout = \"-5m\"\n",
+			"must be positive",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadFrom(write(t, tc.body))
+			if err == nil {
+				t.Fatalf("want an error containing %q, got none", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }

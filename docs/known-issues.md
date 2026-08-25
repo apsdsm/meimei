@@ -1,43 +1,61 @@
 # Known issues
 
-Things found in use that are not yet fixed. Each entry says what was observed, on what, and which
-way the fix points — not a patch, so an entry stays true until someone writes one.
+Things that are wrong or missing in the code as it stands. Each entry says what the behaviour is,
+where it lives, and which way a fix points.
 
-## The task-mate warning reads a different revision than the deploy writes
+## The missing-repository error blames Terraform
 
-`Discover` builds the packing from each ECS **service's current** task definition
-(`svc.TaskDefinition`). `CurrentImages` and `Promote` resolve the **family**, which is the newest
-revision. When a service is several revisions behind, the two describe different tasks.
+`internal/registry/ecr.go` answers a `RepositoryNotFoundException` with "it is created by Terraform,
+not by meimei". That is true of the repositories meimei was built for and false in general — meimei
+works against a cluster built by hand, and there the sentence sends the reader looking for Terraform
+that does not exist.
 
-That gap is not an edge case. It is exactly what `ignore_changes = [task_definition]` produces, and
-`Promote`'s own comment names it as the reason `Promote` reads the family rather than the running
-revision. So the halves disagree precisely in the situation the design was written for.
+The accurate statement is that meimei does not create repositories, whatever does.
 
-Two consequences, both seen on acme `dev1` on 2026-08-20:
+## `registry.Recent` does not paginate
 
-**The `also restarts (shared task): …` line names containers that are not in the task being
-registered.** `meimei deploy process-runner --to dev1 --dry-run` printed
-`also restarts (shared task): api` while promoting from `acme-dev1-internal:7`, which has no `api`
-container — the running revision 5 did. The api was not going to restart; it was going to be
-*removed* from that task, which is a larger change than the warning describes and the opposite of
-reassuring.
+It asks `DescribeImages` for `MaxResults: 100` and sorts what comes back, with no `NextToken` loop.
+ECR returns images in no particular order, so on a repository holding more than 100 images the
+"newest" list can miss recent tags.
 
-**`TaskFor` refuses a service that exists only in the newest revision.** It uses the same
-running-revision packing, so `deploy` returns `no container %q on cluster` for a container
-`Promote` would have handled. On the same cluster, before the external service was moved forward by
-hand, the three `*-web-spa` containers existed only in the newest revision — a deploy of any of them
-would have been refused with a message implying the cluster does not run them.
+Harmless for its only caller today: `suggestTag` asks for one and it is a hint on an error path. It
+has to be fixed before `ls images` lands, because that is a listing people would trust.
 
-Fix direction: build the packing from the task definition `Promote` copies — the family's newest
-revision — and keep the running revision for reporting drift only. "This service is N revisions
-behind" is worth printing; it should not decide what can be deployed.
+## A deploy promotes by tag, not by digest
 
-## `--all` deploys what the repo declares, not what the cluster runs
+`Swap.Image` is always `repository:tag`. The property that staging and production run the same bytes
+rests on ECR immutable tags plus the ambiguous-tag preflight, rather than on pinning a digest.
 
-`selectServices` with `--all` walks the config's services. On a cluster mid-migration that includes
-containers the cluster has never run, and excludes ones it still does. Not wrong — the doc comment
-says it is deliberate — but combined with the issue above the failure arrives as a confusing
-per-container error partway through a multi-task deploy, after earlier tasks have already rolled.
+That is sound while every repository has immutable tags. Making it independent of that would mean
+resolving the tag to a digest at deploy time and writing the digest into the container definition.
 
-Worth considering: resolve every requested service against the packing *before* promoting anything,
-so the run either starts clean or refuses whole.
+## The image's platform is never checked against the task definition
+
+`platform` defaults to `linux/arm64` and can be overridden per build, but nothing compares it with
+the `runtimePlatform` of the task definition being registered. A mismatch surfaces as tasks that
+will not start, part way through a rollout.
+
+The preflight is the natural place: it already fetches the image and the task definition before
+anything is registered.
+
+## The deployment controller is never read
+
+`Promote` always calls `UpdateService` with a task definition. A service using the `CODE_DEPLOY`
+(blue/green) controller rejects that call, and meimei would surface the raw AWS error with no
+explanation. `follow.go` already tolerates a service reporting no `rolloutState`, so half the code
+anticipates a controller the other half does not check for.
+
+Not observed in use — every service meimei deploys to uses the ECS controller.
+
+## Builds run one at a time
+
+`cmd/build.go` builds sequentially and fails fast. Building several at once is worth doing, but it
+needs a concurrency limit and somewhere for several streams of docker output to go.
+
+## Not yet built
+
+`ls` has no subjects. The plan is four — `ls builds`, `ls images`, `ls targets`, `ls services` —
+which together are the data model the TUI renders. `ls services` needs per-target degradation so
+that one expired SSO session reports itself rather than failing the command.
+
+After that: the TUI, and notifications.

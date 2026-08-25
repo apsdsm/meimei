@@ -18,11 +18,11 @@ import (
 
 // Ref names one image a deploy intends to promote.
 type Ref struct {
-	// Service is what the operator typed, kept so a failure can name the thing
+	// Name is the image the operator typed, kept so a failure can name the thing
 	// they know rather than the repository it maps to.
-	Service string
-	Repo    string
-	Tag     string
+	Name string
+	Repo string
+	Tag  string
 }
 
 // Status is what the registry could be told about a Ref.

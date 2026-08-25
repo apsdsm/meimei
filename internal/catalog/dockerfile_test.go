@@ -52,7 +52,7 @@ func TestReadDockerfile(t *testing.T) {
 }
 
 // Base names the language, so it reads the FIRST stage — the last one is a slim
-// runtime that says nothing about what the service is.
+// runtime that says nothing about what the image is.
 func TestBase(t *testing.T) {
 	cases := []struct {
 		image string

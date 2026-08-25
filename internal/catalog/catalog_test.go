@@ -15,7 +15,10 @@ func project(t *testing.T, toml string, dockerfiles ...string) *config.Config {
 	root := t.TempDir()
 
 	path := filepath.Join(root, config.FileName)
-	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
+	// Every fixture gets the format version, so the fixtures below stay about
+	// what they are testing.
+	body := "version = 2\n" + toml
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, rel := range dockerfiles {
@@ -39,13 +42,17 @@ const twoServices = `
 [project]
 name = "acme"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "services/api/Dockerfile"
 group = "api"
 
-[[services]]
+[[builds]]
 name = "user-web"
+repository = "p-user-web"
+container = "user-web"
 dockerfile = "services/web/Dockerfile"
 group = "web"
 `
@@ -59,7 +66,7 @@ func TestLoadBuildable(t *testing.T) {
 	}
 	for _, e := range cat.Entries {
 		if e.Status != Buildable {
-			t.Errorf("%s: status = %v (%s), want buildable", e.Service.Name, e.Status, e.Problem)
+			t.Errorf("%s: status = %v (%s), want buildable", e.Build.Name, e.Status, e.Problem)
 		}
 	}
 
@@ -67,8 +74,14 @@ func TestLoadBuildable(t *testing.T) {
 	if !ok {
 		t.Fatal("Find(api) found nothing")
 	}
-	if api.Repository != "acme-api" {
-		t.Errorf("Repository = %q, want acme-api", api.Repository)
+	// Copied from the build's declaration, never composed from the project and
+	// build names — the fixture deliberately declares "p-api" under a project
+	// called "acme" so a reappearing derivation would fail here.
+	if api.Repository != "p-api" {
+		t.Errorf("Repository = %q, want the declared p-api", api.Repository)
+	}
+	if api.Build.Container != "api" {
+		t.Errorf("Container = %q, want the declared api", api.Build.Container)
 	}
 	if api.Info.Base() != "golang" {
 		t.Errorf("Base = %q, want golang", api.Info.Base())
@@ -78,7 +91,7 @@ func TestLoadBuildable(t *testing.T) {
 	}
 }
 
-// A missing Dockerfile marks one service broken and leaves the rest alone —
+// A missing Dockerfile marks one image broken and leaves the rest alone —
 // the whole reason it isn't a load error.
 func TestLoadMissingDockerfileIsPerService(t *testing.T) {
 	cfg := project(t, twoServices, "services/api/Dockerfile")
@@ -104,14 +117,16 @@ func TestLoadMissingDockerfileIsPerService(t *testing.T) {
 }
 
 func TestLoadDisabledIsNotInspected(t *testing.T) {
-	// No Dockerfile written: a disabled service is excluded by declaration, so
+	// No Dockerfile written: a disabled image is excluded by declaration, so
 	// its missing file must not be reported as a problem.
 	cfg := project(t, `
 [project]
 name = "acme"
 
-[[services]]
+[[builds]]
 name = "retired"
+repository = "p-retired"
+container = "retired"
 dockerfile = "services/gone/Dockerfile"
 disabled = true
 `)
@@ -122,18 +137,21 @@ disabled = true
 		t.Errorf("status = %v, want disabled", e.Status)
 	}
 	if e.Problem != "" {
-		t.Errorf("Problem = %q, want a disabled service to report none", e.Problem)
+		t.Errorf("Problem = %q, want a disabled image to report none", e.Problem)
 	}
 }
 
 func TestLoadFileWithoutFromIsBroken(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(`
+	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(`version = 2
+
 [project]
 name = "acme"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "Dockerfile"
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -158,8 +176,10 @@ func TestLoadDirectoryAtDockerfilePathIsBroken(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "services/api/Dockerfile"
 `)
 	if err := os.MkdirAll(filepath.Join(cfg.Root, "services/api/Dockerfile"), 0o755); err != nil {
@@ -177,18 +197,24 @@ func TestGroupsAreInFirstSeenOrder(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 group = "api"
 
-[[services]]
+[[builds]]
 name = "user-web"
+repository = "p-user-web"
+container = "user-web"
 dockerfile = "b/Dockerfile"
 group = "web"
 
-[[services]]
+[[builds]]
 name = "process-runner"
+repository = "p-process-runner"
+container = "process-runner"
 dockerfile = "c/Dockerfile"
 group = "api"
 `, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
@@ -204,8 +230,8 @@ group = "api"
 	if len(groups[0].Entries) != 2 {
 		t.Errorf("group api has %d entries, want 2", len(groups[0].Entries))
 	}
-	if groups[0].Entries[1].Service.Name != "process-runner" {
-		t.Errorf("second entry in api = %q, want process-runner", groups[0].Entries[1].Service.Name)
+	if groups[0].Entries[1].Build.Name != "process-runner" {
+		t.Errorf("second entry in api = %q, want process-runner", groups[0].Entries[1].Build.Name)
 	}
 }
 
@@ -216,12 +242,16 @@ func TestGroupsPutUngroupedLast(t *testing.T) {
 [project]
 name = "acme"
 
-[[services]]
+[[builds]]
 name = "docs"
+repository = "p-docs"
+container = "docs"
 dockerfile = "a/Dockerfile"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "p-api"
+container = "api"
 dockerfile = "b/Dockerfile"
 group = "api"
 `, "a/Dockerfile", "b/Dockerfile")
@@ -241,18 +271,18 @@ group = "api"
 func TestFindMissing(t *testing.T) {
 	cfg := project(t, twoServices, "services/api/Dockerfile", "services/web/Dockerfile")
 	if _, ok := Load(cfg, "").Find("nope"); ok {
-		t.Error("Find returned an entry for a service that isn't declared")
+		t.Error("Find returned an entry for an image that isn't declared")
 	}
 }
 
-// A label is used verbatim as the tag; without one the build is tagged by
-// commit under the reserved sha- prefix.
-func TestLabelOverridesTheCommitTag(t *testing.T) {
+// A named tag is used verbatim; without one the build is tagged by commit under
+// the reserved sha- prefix.
+func TestNamedTagOverridesTheCommitTag(t *testing.T) {
 	cfg := project(t, twoServices, "services/api/Dockerfile", "services/web/Dockerfile")
 
 	cat := Load(cfg, "acme.2026_010.001")
 	if cat.Entries[0].Tag != "acme.2026_010.001" {
-		t.Errorf("Tag = %q, want the label verbatim", cat.Entries[0].Tag)
+		t.Errorf("Tag = %q, want the named tag verbatim", cat.Entries[0].Tag)
 	}
 }
 
@@ -260,18 +290,18 @@ func TestGitTag(t *testing.T) {
 	cases := []struct {
 		name  string
 		git   Git
-		label string
+		named string
 		want  string
 	}{
 		{"commit", Git{SHA: "abc1234", Available: true}, "", "sha-abc1234"},
-		{"label wins", Git{SHA: "abc1234", Available: true}, "rel.001", "rel.001"},
-		{"no git, no label", Git{}, "", ""},
-		{"no git, label still tags", Git{}, "rel.001", "rel.001"},
+		{"named tag wins", Git{SHA: "abc1234", Available: true}, "rel.001", "rel.001"},
+		{"no git, no tag", Git{}, "", ""},
+		{"no git, a named tag still tags", Git{}, "rel.001", "rel.001"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.git.Tag(tc.label); got != tc.want {
-				t.Errorf("Tag(%q) = %q, want %q", tc.label, got, tc.want)
+			if got := tc.git.Tag(tc.named); got != tc.want {
+				t.Errorf("Tag(%q) = %q, want %q", tc.named, got, tc.want)
 			}
 		})
 	}
@@ -290,7 +320,7 @@ func TestLoadWithoutGit(t *testing.T) {
 		t.Errorf("Tag = %q, want empty without git", cat.Entries[0].Tag)
 	}
 	if cat.Entries[0].Status != Buildable {
-		t.Error("a service should still be buildable outside git")
+		t.Error("an image should still be buildable outside git")
 	}
 }
 

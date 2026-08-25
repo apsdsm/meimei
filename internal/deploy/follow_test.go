@@ -111,45 +111,45 @@ func TestProgressPreviousColumnLinesUp(t *testing.T) {
 	}
 }
 
-// Task's two container lists are the fix for a deploy that described the wrong
-// task: what can be deployed comes from the newest revision, and what is going
-// away can only be seen by comparing it with the running one.
+// Service's two container lists are the fix for a deploy that described the wrong
+// task definition: what can be deployed comes from the newest revision, and what
+// is going away can only be seen by comparing it with the running one.
 
-func TestTaskBehindComparesRevisions(t *testing.T) {
-	behind := Task{Running: "arn:…/acme-dev1-internal:5", Deployable: "arn:…/acme-dev1-internal:7"}
+func TestServiceBehindComparesRevisions(t *testing.T) {
+	behind := Service{Running: "arn:…/acme-dev1-internal:5", Deployable: "arn:…/acme-dev1-internal:7"}
 	if !behind.Behind() {
 		t.Error("Behind() = false, want true when the service runs an older revision")
 	}
 
-	current := Task{Running: "arn:…/x:7", Deployable: "arn:…/x:7"}
+	current := Service{Running: "arn:…/x:7", Deployable: "arn:…/x:7"}
 	if current.Behind() {
 		t.Error("Behind() = true, want false when the service is on the newest revision")
 	}
 }
 
-func TestTaskLeavingFindsContainersTerraformDropped(t *testing.T) {
-	// The real case from acme dev1: the internal task ran api + process-runner,
-	// and the revision a deploy would register carries only the runner.
-	task := Task{
+func TestServiceLeavingFindsContainersTerraformDropped(t *testing.T) {
+	// The real case from acme dev1: the internal task definition ran api and
+	// process-runner, and the revision a deploy would register carries only the runner.
+	svc := Service{
 		Containers:        []string{"process-runner"},
 		RunningContainers: []string{"api", "process-runner"},
 	}
 
-	leaving := task.Leaving()
+	leaving := svc.Leaving()
 	if len(leaving) != 1 || leaving[0] != "api" {
 		t.Errorf("Leaving() = %v, want [api] — it is removed, not restarted", leaving)
 	}
 }
 
-func TestTaskLeavingIgnoresContainersOnlyInTheNewRevision(t *testing.T) {
+func TestServiceLeavingIgnoresContainersOnlyInTheNewRevision(t *testing.T) {
 	// The mirror case: containers Terraform has added but nothing has run yet.
 	// They are arriving, not leaving, and must not be reported as either.
-	task := Task{
+	svc := Service{
 		Containers:        []string{"api", "sysadmin-web-spa", "user-web-spa"},
 		RunningContainers: []string{"api"},
 	}
 
-	if leaving := task.Leaving(); len(leaving) != 0 {
+	if leaving := svc.Leaving(); len(leaving) != 0 {
 		t.Errorf("Leaving() = %v, want nothing", leaving)
 	}
 }
