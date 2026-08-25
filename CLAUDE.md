@@ -20,6 +20,24 @@ before changing the build or deploy path.
 `v0.1.0` was a different tool — CodeDeploy, S3 bundles, a DynamoDB build catalogue, `.meimei.yaml`.
 Its code is gone. "v2" in branch names is the name of that rewrite, not a module major version.
 
+## This repository is public
+
+Nothing here may carry a real identifier. That covers docs, the README, code
+comments, test fixtures, commit messages and PR bodies — anything that ends up on
+GitHub or in a published module version.
+
+Use reserved example values: AWS documentation account ids (`123456789012`,
+`111122223333`, `444455556666`), `example.com`, TEST-NET addresses
+(`203.0.113.0/24`), and the fictional products `acme` and `nova` with their clusters,
+services, repositories and profiles. Real values from `.meimei.toml` files in other
+repositories, or from live AWS calls, get substituted before they are written here.
+
+This is not a style preference. Real account ids, a public IP and internal hostnames
+reached this repo once and removing them cost a rewrite of every commit, three
+deleted tags and a new release — and it still failed, because proxy.golang.org is
+append-only and serves the old versions permanently. An AWS account id cannot be
+rotated.
+
 ## Rules that shape the code
 
 **Declare AWS names, never compute them.** Every identifier meimei sends to AWS is an explicit
