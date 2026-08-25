@@ -35,7 +35,7 @@ to that directory.
 version = 2
 
 [project]
-name     = "acme"                # prefixes every ECR repository: acme-api, acme-user-web-spa
+name     = "acme"                # a label for this repo in output; names nothing in AWS
 region   = "ap-northeast-1"
 platform = "linux/arm64"         # default build platform
 

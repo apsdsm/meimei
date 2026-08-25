@@ -96,7 +96,7 @@ dockerfile = "a/Dockerfile"
 func TestTwoBuildsMayShareARepository(t *testing.T) {
 	if _, err := LoadFrom(write(t, `
 [project]
-name = "tc"
+name = "nova"
 
 [[builds]]
 name = "chatbot"

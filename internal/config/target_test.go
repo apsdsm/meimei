@@ -8,7 +8,7 @@ import (
 
 const withTargets = `
 [project]
-name = "tc"
+name = "nova"
 region = "ap-northeast-1"
 
 [[builds]]
@@ -19,12 +19,12 @@ dockerfile = "Dockerfile"
 
 [registry]
 account = "123456789012"
-profile = "tcr"
+profile = "nova-registry"
 
 [[targets]]
 name = "public1"
 account = "123456789012"
-profile = "tcr"
+profile = "nova-registry"
 cluster = "nova-public1"
 `
 
@@ -112,7 +112,7 @@ func TestNoTargets(t *testing.T) {
 }
 
 func TestRegistryAndTargetValidation(t *testing.T) {
-	base := "[project]\nname = \"tc\"\nregion = \"ap-northeast-1\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n"
+	base := "[project]\nname = \"nova\"\nregion = \"ap-northeast-1\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n"
 	cases := []struct{ name, body, want string }{
 		{"registry without account", base + "[registry]\nprofile = \"p\"\n", "registry.account is required"},
 		{"target without cluster", base + "[[targets]]\nname = \"t\"\naccount = \"1\"\n", "has no cluster"},
@@ -135,7 +135,7 @@ func TestRegistryAndTargetValidation(t *testing.T) {
 
 // A region has to come from somewhere; project.region is the usual source.
 func TestRegistryNeedsARegion(t *testing.T) {
-	_, err := LoadFrom(write(t, "[project]\nname = \"tc\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n\n[registry]\naccount = \"1\"\n"))
+	_, err := LoadFrom(write(t, "[project]\nname = \"nova\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n\n[registry]\naccount = \"1\"\n"))
 	if err == nil || !strings.Contains(err.Error(), "region") {
 		t.Errorf("err = %v, want a complaint about the missing region", err)
 	}
@@ -146,7 +146,7 @@ func TestRegistryNeedsARegion(t *testing.T) {
 func TestTargetServicesAreDeclared(t *testing.T) {
 	cfg, err := LoadFrom(write(t, `
 [project]
-name = "tc"
+name = "nova"
 region = "ap-northeast-1"
 
 [[builds]]
@@ -201,7 +201,7 @@ timeout = "15m"
 const defaultForTest = 10 * time.Minute
 
 func TestTargetRejects(t *testing.T) {
-	base := "[project]\nname = \"tc\"\nregion = \"r\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n"
+	base := "[project]\nname = \"nova\"\nregion = \"r\"\n\n[[builds]]\nname = \"a\"\nrepository = \"r\"\ncontainer = \"c\"\ndockerfile = \"D\"\n"
 	cases := []struct{ name, body, want string }{
 		{
 			"duplicate service in one target",
