@@ -17,12 +17,18 @@
 // packing read from what is running does not know it can be deployed — and a
 // container Terraform has just removed is still in the running one, so such a
 // packing believes it will survive a deploy that in fact drops it. Both were
-// live on jjc2 dev1; see docs/known-issues.md.
+// live on jjc2 dev1 before the Deployable/Running split below.
 //
-// What is packed into which task is read from the cluster, never from config. A
-// service's name is its task definition family, and the container names inside
-// it are the services it carries. That is a per-cluster Terraform decision, so
-// a copy in config would be a mirror that drifts.
+// What is packed into which task definition is read from the cluster, never from
+// config: the container names inside a service's newest revision are the builds
+// it carries. That is a per-cluster Terraform decision, so a copy in config
+// would be a mirror that drifts.
+//
+// WHICH services are this target's is the opposite kind of fact, and it is
+// declared. ECS has no notion of an environment, so nothing on the cluster says
+// which of its services are production and which are staging. A target names
+// them, and resolution is scoped to that list before any container name is
+// matched.
 package deploy
 
 import (
@@ -38,24 +44,38 @@ import (
 	"github.com/apsdsm/meimei/internal/awsx"
 )
 
-// Client is an ECS cluster meimei can deploy to.
+// Client is one target: an ECS cluster, and the services in it this target
+// addresses.
 type Client struct {
 	ecs     *ecs.Client
 	cluster string
+
+	// scope is the target's declared ECS service names. Empty means every
+	// service on the cluster, which is right for a cluster carrying one
+	// environment.
+	scope []string
 }
 
-// New builds a client from an already-verified session.
-func New(s *awsx.Session, cluster string) *Client {
-	return &Client{ecs: ecs.NewFromConfig(s.Config), cluster: cluster}
+// New builds a client from an already-verified session. scope is the target's
+// declared ECS services; nil or empty means the whole cluster.
+func New(s *awsx.Session, cluster string, scope []string) *Client {
+	return &Client{ecs: ecs.NewFromConfig(s.Config), cluster: cluster, scope: scope}
 }
 
-// Task is one ECS service on the cluster, and the containers it runs.
-//
-// The service name and the task definition family are the same string — that is
-// how ECS is set up here, and it is what lets a container name be traced back
-// to the thing that has to be rolled to change it.
-type Task struct {
-	Service string // == the task definition family
+// Service is one ECS service on the cluster, and the containers it runs.
+type Service struct {
+	// Name is the ECS service — what UpdateService is called against. Family is
+	// its task definition family, which RegisterTaskDefinition is called
+	// against.
+	//
+	// Both are READ, neither is derived. Name comes from DescribeServices;
+	// Family is parsed out of the task definition ARN that same call returns,
+	// which is where ECS itself states it. They are the same string in every
+	// cluster we run, because the Terraform here names both from one variable —
+	// but that is a convention, not something ECS requires, and meimei no
+	// longer relies on it.
+	Name   string
+	Family string
 
 	// Deployable is the newest revision of the family — the one Promote copies
 	// — and Containers are its containers. What a deploy may name comes from
@@ -78,18 +98,18 @@ type Task struct {
 // Behind reports whether the service is running an older revision than the one
 // a deploy would copy — the normal state under `ignore_changes`, and worth
 // saying out loud because it is what makes the two container lists differ.
-func (t *Task) Behind() bool { return t.Running != t.Deployable }
+func (s *Service) Behind() bool { return s.Running != s.Deployable }
 
 // Leaving lists containers that are running now and absent from the revision a
 // deploy would register. They do not restart — they go away, which is a bigger
 // change than a restart and the one most worth warning about.
-func (t *Task) Leaving() []string {
-	staying := make(map[string]bool, len(t.Containers))
-	for _, c := range t.Containers {
+func (s *Service) Leaving() []string {
+	staying := make(map[string]bool, len(s.Containers))
+	for _, c := range s.Containers {
 		staying[c] = true
 	}
 	var out []string
-	for _, c := range t.RunningContainers {
+	for _, c := range s.RunningContainers {
 		if !staying[c] {
 			out = append(out, c)
 		}
@@ -98,32 +118,42 @@ func (t *Task) Leaving() []string {
 	return out
 }
 
-// Packing is what the cluster says about where each service lives.
+// Packing is what the cluster says about which task definition each image is
+// packed into.
 type Packing struct {
-	Tasks []Task
+	Services []Service
 
-	// byContainer maps a container name to the task carrying it.
-	byContainer map[string]*Task
+	// byContainer maps a container name to the service carrying it, WITHIN this
+	// target's scope.
+	//
+	// Scoped, not cluster-wide: two services in one cluster may carry a
+	// container of the same name, which is what a staging service beside
+	// production looks like, and the target says which of them is this one. A
+	// collision inside one scope is a hard error rather than a silent
+	// last-writer-wins — see Discover.
+	byContainer map[string]*Service
 }
 
-// TaskFor finds the task carrying a container.
-func (p *Packing) TaskFor(container string) (*Task, bool) {
-	t, ok := p.byContainer[container]
-	return t, ok
+// ServiceFor finds the service carrying a container.
+func (p *Packing) ServiceFor(container string) (*Service, bool) {
+	s, ok := p.byContainer[container]
+	return s, ok
 }
 
-// TaskNamed finds a task by its family.
-func (p *Packing) TaskNamed(family string) (*Task, bool) {
-	for i := range p.Tasks {
-		if p.Tasks[i].Service == family {
-			return &p.Tasks[i], true
+// ServiceWithFamily finds the service whose task definition family is the given
+// one. Takes a family rather than a service name because that is what a caller
+// mid-deploy has in hand — it registered a revision of it.
+func (p *Packing) ServiceWithFamily(family string) (*Service, bool) {
+	for i := range p.Services {
+		if p.Services[i].Family == family {
+			return &p.Services[i], true
 		}
 	}
 	return nil, false
 }
 
-// Containers lists every container name on the cluster, sorted — the answer to
-// "what can I actually deploy here".
+// Containers lists every container name in this target's scope, sorted — the
+// answer to "what can I actually deploy here".
 func (p *Packing) Containers() []string {
 	var out []string
 	for name := range p.byContainer {
@@ -133,8 +163,116 @@ func (p *Packing) Containers() []string {
 	return out
 }
 
-// Discover reads the cluster's current packing.
+// Discover reads this target's current packing.
+//
+// Scope first, then match. With a declared scope, exactly those services are
+// described and nothing else on the cluster is looked at; without one, every
+// service on the cluster is in scope.
 func (c *Client) Discover(ctx context.Context) (*Packing, error) {
+	names, err := c.inScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var found []Service
+
+	// DescribeServices takes at most ten at a time.
+	for start := 0; start < len(names); start += 10 {
+		end := min(start+10, len(names))
+		batch := names[start:end]
+		out, err := c.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
+			Cluster:  &c.cluster,
+			Services: batch,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("describing services on %s: %w", c.cluster, err)
+		}
+		// A service the target names and the cluster does not have comes back
+		// as a failure rather than an error. Naming it is the whole point:
+		// silently deploying to the rest would be deploying to a target that is
+		// not the one that was declared.
+		if len(c.scope) > 0 {
+			if err := describeFailures(out.Failures, c.cluster); err != nil {
+				return nil, err
+			}
+		}
+		for _, awsSvc := range out.Services {
+			name := aws.ToString(awsSvc.ServiceName)
+
+			// The family is READ, out of the task definition ARN the service is
+			// pointed at, because that is where ECS states it. It is equal to
+			// the service name under the Terraform convention here, but nothing
+			// depends on that any more.
+			family, err := familyFromARN(aws.ToString(awsSvc.TaskDefinition))
+			if err != nil {
+				return nil, fmt.Errorf("service %s on %s: %w", name, c.cluster, err)
+			}
+
+			// The family resolves to the newest revision. This is the one that
+			// decides what can be deployed, because it is the one Promote
+			// copies.
+			newest, err := c.describeTaskDefinition(ctx, family)
+			if err != nil {
+				return nil, err
+			}
+			s := Service{
+				Name:         name,
+				Family:       family,
+				Deployable:   aws.ToString(newest.TaskDefinitionArn),
+				Running:      aws.ToString(awsSvc.TaskDefinition),
+				Desired:      awsSvc.DesiredCount,
+				RunningCount: awsSvc.RunningCount,
+				Containers:   containerNamesInOrder(newest.ContainerDefinitions),
+			}
+
+			// Only fetch the running revision when it is a different one. Under
+			// ignore_changes it usually is, but a service that is up to date
+			// should not pay for a second call to learn nothing.
+			if s.Running == s.Deployable {
+				s.RunningContainers = s.Containers
+			} else {
+				running, err := c.describeTaskDefinition(ctx, s.Running)
+				if err != nil {
+					return nil, err
+				}
+				s.RunningContainers = containerNamesInOrder(running.ContainerDefinitions)
+			}
+
+			found = append(found, s)
+		}
+	}
+
+	return NewPacking(found, c.cluster, len(c.scope) > 0)
+}
+
+// NewPacking indexes a scope's services by the containers they carry.
+//
+// Pure, and separate from Discover for that reason: the rule that has actually
+// caused trouble is what happens when two services carry the same container
+// name, and it is worth having under test without an ECS client. scoped says
+// whether the target declared its services, which changes only the advice in
+// the refusal.
+func NewPacking(services []Service, cluster string, scoped bool) (*Packing, error) {
+	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+
+	p := &Packing{Services: services, byContainer: make(map[string]*Service, len(services))}
+	for i := range p.Services {
+		for _, container := range p.Services[i].Containers {
+			if prev, clash := p.byContainer[container]; clash {
+				return nil, ambiguous(container, cluster, prev.Name, p.Services[i].Name, scoped)
+			}
+			p.byContainer[container] = &p.Services[i]
+		}
+	}
+	return p, nil
+}
+
+// inScope lists the ECS services this target addresses, by name.
+func (c *Client) inScope(ctx context.Context) ([]string, error) {
+	if len(c.scope) > 0 {
+		return c.scope, nil
+	}
+
 	var arns []string
 	pager := ecs.NewListServicesPaginator(c.ecs, &ecs.ListServicesInput{Cluster: &c.cluster})
 	for pager.HasMorePages() {
@@ -145,64 +283,87 @@ func (c *Client) Discover(ctx context.Context) (*Packing, error) {
 		arns = append(arns, page.ServiceArns...)
 	}
 	if len(arns) == 0 {
-		return nil, fmt.Errorf("cluster %q has no services (is the name right, and has Terraform been applied?)", c.cluster)
+		return nil, fmt.Errorf("cluster %q has no services (is the name right, and has the "+
+			"infrastructure been applied?)", c.cluster)
 	}
+	return arns, nil
+}
 
-	p := &Packing{byContainer: map[string]*Task{}}
-
-	// DescribeServices takes at most ten at a time.
-	for start := 0; start < len(arns); start += 10 {
-		end := min(start+10, len(arns))
-		out, err := c.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
-			Cluster:  &c.cluster,
-			Services: arns[start:end],
-		})
-		if err != nil {
-			return nil, fmt.Errorf("describing services on %s: %w", c.cluster, err)
+// describeFailures turns DescribeServices' per-service failures into one error
+// naming every service the target declared and the cluster does not have.
+func describeFailures(failures []ecstypes.Failure, cluster string) error {
+	var missing []string
+	for _, f := range failures {
+		name := aws.ToString(f.Arn)
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
 		}
-		for _, svc := range out.Services {
-			family := aws.ToString(svc.ServiceName)
-
-			// The family resolves to the newest revision. This is the one that
-			// decides what can be deployed, because it is the one Promote
-			// copies.
-			newest, err := c.describeTaskDefinition(ctx, family)
-			if err != nil {
-				return nil, err
-			}
-			t := Task{
-				Service:      family,
-				Deployable:   aws.ToString(newest.TaskDefinitionArn),
-				Running:      aws.ToString(svc.TaskDefinition),
-				Desired:      svc.DesiredCount,
-				RunningCount: svc.RunningCount,
-				Containers:   containerNamesInOrder(newest.ContainerDefinitions),
-			}
-
-			// Only fetch the running revision when it is a different one. Under
-			// ignore_changes it usually is, but a service that is up to date
-			// should not pay for a second call to learn nothing.
-			if t.Running == t.Deployable {
-				t.RunningContainers = t.Containers
-			} else {
-				running, err := c.describeTaskDefinition(ctx, t.Running)
-				if err != nil {
-					return nil, err
-				}
-				t.RunningContainers = containerNamesInOrder(running.ContainerDefinitions)
-			}
-
-			p.Tasks = append(p.Tasks, t)
-		}
+		missing = append(missing, fmt.Sprintf("%s (%s)", name, aws.ToString(f.Reason)))
 	}
-
-	sort.Slice(p.Tasks, func(i, j int) bool { return p.Tasks[i].Service < p.Tasks[j].Service })
-	for i := range p.Tasks {
-		for _, name := range p.Tasks[i].Containers {
-			p.byContainer[name] = &p.Tasks[i]
-		}
+	if len(missing) == 0 {
+		return nil
 	}
-	return p, nil
+	sort.Strings(missing)
+	return fmt.Errorf("cluster %s does not have %s named by this target: %s",
+		cluster, plural(len(missing), "the service", "the services"), strings.Join(missing, ", "))
+}
+
+// ambiguous refuses a container name carried by two services in one scope.
+//
+// It is a refusal rather than a choice because there is no correct choice: both
+// services are this target's, and a deploy naming that container cannot say
+// which was meant. Before scoping existed this overwrote silently and the
+// alphabetically last service won, which rolled the wrong environment and
+// reported success.
+func ambiguous(container, cluster, a, b string, scoped bool) error {
+	if scoped {
+		return fmt.Errorf("container %q is on two services this target names, %s and %s — "+
+			"a deploy naming it cannot say which one you mean.\n"+
+			"       Two services in one target's scope must not carry the same container name; "+
+			"split them across two targets, or drop one from this target's `services`.",
+			container, a, b)
+	}
+	return fmt.Errorf("container %q is on two services in cluster %s, %s and %s — "+
+		"a deploy naming it cannot say which one you mean.\n\n"+
+		"       This target has no `services`, so its scope is the whole cluster. Name the ECS\n"+
+		"       services each target addresses to separate them:\n\n"+
+		"           [[targets]]\n"+
+		"           name     = \"...\"\n"+
+		"           cluster  = %q\n"+
+		"           services = [%q]\n",
+		container, cluster, a, b, cluster, a)
+}
+
+// familyFromARN pulls the task definition family out of the reference a service
+// is pointed at: arn:aws:ecs:<region>:<acct>:task-definition/<family>:<revision>.
+//
+// Read rather than assumed equal to the service name. The two are the same
+// string under the Terraform convention in these repos, but ECS does not
+// require it, and a cluster built by hand is free to pair them however it likes.
+func familyFromARN(ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("has no task definition")
+	}
+	rest := ref
+	if i := strings.LastIndex(rest, "/"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	if i := strings.LastIndex(rest, ":"); i >= 0 {
+		rest = rest[:i]
+	}
+	if rest == "" {
+		return "", fmt.Errorf("task definition %q has no family in it", ref)
+	}
+	return rest, nil
+}
+
+// plural picks a form. Duplicated from cmd rather than exported from it: this
+// package must not import the command layer.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func (c *Client) describeTaskDefinition(ctx context.Context, ref string) (*ecstypes.TaskDefinition, error) {
@@ -219,16 +380,22 @@ type Swap struct {
 	Image     string
 }
 
-// Promote registers a new revision of one task with the given containers'
-// images replaced, and points the service at it. It returns the new ARN.
+// Promote registers a new revision of one task definition with the given
+// containers' images replaced, and points the ECS service at it. It returns the
+// new ARN.
 //
-// Several containers at once by design: services are packed, and promoting them
+// Takes the family and the service separately because it calls
+// RegisterTaskDefinition against one and UpdateService against the other. They
+// are the same string in every cluster we run — see Service — and passing both
+// means the caller states which is which rather than relying on that.
+//
+// Several containers at once by design: images are packed, and promoting them
 // one at a time would register a revision and roll the task for each — where
 // one revision and one rollout does the same job. On a cluster brought up fresh
 // it is also the only thing that works, because Terraform seeds every container
-// with an unpullable tag and they are all essential, so the task cannot start
-// until every image is real.
-func (c *Client) Promote(ctx context.Context, family string, swaps []Swap) (string, error) {
+// with an unpullable tag and they are all essential, so no task can start until
+// every image is real.
+func (c *Client) Promote(ctx context.Context, family, service string, swaps []Swap) (string, error) {
 	// The family, not the service's current ARN: the service can be several
 	// revisions behind what Terraform has registered (that is what
 	// ignore_changes produces), and deploying from the running revision would
@@ -290,10 +457,10 @@ func (c *Client) Promote(ctx context.Context, family string, swaps []Swap) (stri
 
 	if _, err := c.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster:        &c.cluster,
-		Service:        &family,
+		Service:        &service,
 		TaskDefinition: &arn,
 	}); err != nil {
-		return "", fmt.Errorf("pointing %s at %s: %w", family, arn, err)
+		return "", fmt.Errorf("pointing %s at %s: %w", service, arn, err)
 	}
 	return arn, nil
 }

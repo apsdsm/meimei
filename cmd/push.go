@@ -60,12 +60,12 @@ func runPush(ctx context.Context, pc *pushContext, cat *catalog.Catalog, plans [
 			// is a build that already finished. Re-running the same command
 			// should be quiet, not fatal.
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s — %s already pushed, skipping\n",
-				i+1, len(plans), p.Service, p.Image)
+				i+1, len(plans), p.Name, p.Image)
 			continue
 		}
 
 		fmt.Fprintf(os.Stderr, "\n[%d/%d] %s → %s (%s, push via %s)\n",
-			i+1, len(plans), p.Service, p.Image, p.Platform, p.Route)
+			i+1, len(plans), p.Name, p.Image, p.Platform, p.Route)
 
 		if err := runner.Run(ctx, p); err != nil {
 			return err

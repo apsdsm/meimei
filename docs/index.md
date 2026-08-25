@@ -1,13 +1,12 @@
 # meimei documentation
 
-The entry point. **Read this, then zoom in** — each page below has a one-line hook so you can judge
-relevance without opening it. Nothing here restates the pages it points at.
-
-`README.md` describes v1 (CodeDeploy, S3 bundles, DynamoDB) and is **stale on the `v2` branch**.
-`CLAUDE.md` is the current intent and the rules that shape the rewrite.
+`README.md` is the starting point: what meimei is, how to configure it, and what it requires of your
+infrastructure. `CLAUDE.md` holds the rules that shape the code.
 
 | Page | What it covers |
 |---|---|
-| [gap-deploy-image-preflight.md](gap-deploy-image-preflight.md) | **Implemented.** `deploy` asks the registry whether every image it would promote is there, and refuses before registering anything if one is not — a commit-then-deploy without a build used to cost two minutes and a `CannotPullImageManifestError` naming neither the tag nor the cause. Also refuses a tag it cannot tell apart from another name for the same image. Keeps the original observation, the requirements, and what the tool must not regress. |
-| [push-and-deploy-spec.md](push-and-deploy-spec.md) | A real ECR push and ECS deploy run by hand, command by command with actual output — the worked example `--push` and `deploy` were built from, and now the record of what they encode. Includes the six traps it hit — immutable tags, the emulated-build credential session, the fields `register-task-definition` refuses, and why the service was three revisions behind. |
-| [known-issues.md](known-issues.md) | What has been found in use and not yet fixed, with what it was observed on. Today: the packing is read from the running revision while the deploy is built from the newest one, so the task-mate warning and the "no such container" refusal can both describe a task nobody is deploying. |
+| [config-reference.md](config-reference.md) | Every `.meimei.toml` key: whether it is required, its default, and what AWS calls it. Config version 2, with the version 1 migration at the end. |
+| [terms.md](terms.md) | One word per concept — build, image, container, service, task definition, family, revision, task, target, cluster, scope, rollout, repository, tag. The rule it applies: if AWS has a name for the thing, use AWS's name. Read it before naming anything. |
+| [deploys.md](deploys.md) | What `build` and `deploy` actually do, step by step; why a deploy copies the newest revision rather than the running one; what the registry preflight checks; and the AWS behaviour the two commands encode. |
+| [decisions.md](decisions.md) | Why meimei is shaped the way it is, each entry with its reason and date. Declared rather than computed AWS names, targets as a cluster plus a scope, every build pushing, the flag rule, the vocabulary, and the config version scheme. |
+| [known-issues.md](known-issues.md) | What is wrong or missing in the code as it stands, and which way each fix points. |

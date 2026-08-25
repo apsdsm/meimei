@@ -20,7 +20,10 @@ func fixture(t *testing.T, toml string, dockerfiles ...string) *catalog.Catalog 
 	t.Helper()
 	root := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(toml), 0o644); err != nil {
+	// Every fixture gets the format version, so the fixtures below stay about
+	// what they are testing.
+	body := "version = 2\n" + toml
+	if err := os.WriteFile(filepath.Join(root, config.FileName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, rel := range dockerfiles {
@@ -56,23 +59,29 @@ const threeServices = `
 [project]
 name = "jjc2"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "jjc2-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 
-[[services]]
+[[builds]]
 name = "user-web"
+repository = "jjc2-user-web"
+container = "user-web"
 dockerfile = "b/Dockerfile"
 
-[[services]]
+[[builds]]
 name = "retired"
+repository = "jjc2-retired"
+container = "retired"
 dockerfile = "c/Dockerfile"
 disabled = true
 `
 
-func opts(services ...string) Options {
+func opts(builds ...string) Options {
 	return Options{
-		Services: services,
+		Builds:   builds,
 		Platform: "linux/arm64",
 		Now:      stamp,
 		Output:   OutputLoad,
@@ -112,7 +121,7 @@ func TestResolveSingleService(t *testing.T) {
 	}
 }
 
-// --all builds every buildable service and silently leaves out the ones
+// --all builds every buildable image and silently leaves out the ones
 // declared disabled.
 func TestResolveAllSkipsDisabled(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
@@ -125,20 +134,20 @@ func TestResolveAllSkipsDisabled(t *testing.T) {
 		t.Fatalf("got %d plans, want 2 (retired is disabled)", len(plans))
 	}
 	for _, p := range plans {
-		if p.Service == "retired" {
-			t.Error("a disabled service was included in --all")
+		if p.Name == "retired" {
+			t.Error("a disabled image was included in --all")
 		}
 	}
 }
 
-// Naming a disabled service explicitly is a mistake worth reporting — the
+// Naming a disabled image explicitly is a mistake worth reporting — the
 // caller asked for something specific and would otherwise get silence.
 func TestResolveNamedDisabledIsAnError(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
 
 	_, err := Resolve(cat, opts("retired"))
 	if err == nil {
-		t.Fatal("want an error naming the disabled service")
+		t.Fatal("want an error naming the disabled image")
 	}
 	if !strings.Contains(err.Error(), "disabled") || !strings.Contains(err.Error(), "retired") {
 		t.Errorf("error = %q, want it to say retired is disabled", err)
@@ -150,12 +159,12 @@ func TestResolveUnknownServiceListsKnown(t *testing.T) {
 
 	_, err := Resolve(cat, opts("apo"))
 	if err == nil {
-		t.Fatal("want an error for an unknown service")
+		t.Fatal("want an error for an unknown image")
 	}
 	// A mistyped name is the usual cause, so the message has to show the real
 	// ones to be any use.
 	if !strings.Contains(err.Error(), "api") || !strings.Contains(err.Error(), "user-web") {
-		t.Errorf("error = %q, want it to list the known services", err)
+		t.Errorf("error = %q, want it to list the known images", err)
 	}
 }
 
@@ -164,17 +173,17 @@ func TestResolveBrokenServiceIsRefused(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "c/Dockerfile")
 
 	if _, err := Resolve(cat, opts("user-web")); err == nil {
-		t.Fatal("want an error for a service whose Dockerfile is missing")
+		t.Fatal("want an error for an image whose Dockerfile is missing")
 	}
 
 	// And --all refuses too rather than quietly building a subset: a caller who
 	// asked for everything and got four of five images would not know.
 	_, err := Resolve(cat, allOpts())
 	if err == nil {
-		t.Fatal("want --all to refuse while any service is broken")
+		t.Fatal("want --all to refuse while any image is broken")
 	}
 	if !strings.Contains(err.Error(), "user-web") {
-		t.Errorf("error = %q, want it to name the broken service", err)
+		t.Errorf("error = %q, want it to name the broken image", err)
 	}
 }
 
@@ -184,14 +193,14 @@ func TestResolveNoServiceNamed(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error when nothing is named")
 	}
-	// The way out has to be in the message; "no service named" alone leaves the
+	// The way out has to be in the message; "no image named" alone leaves the
 	// caller guessing at the spelling of the flag.
 	if !strings.Contains(err.Error(), "--all") {
 		t.Errorf("error = %q, want it to point at --all", err)
 	}
 }
 
-// Several services in one invocation — something the script could not do at
+// Several images in one invocation — something the script could not do at
 // all, since its only choices were one name or the literal "all".
 func TestResolveSeveralServices(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
@@ -203,8 +212,8 @@ func TestResolveSeveralServices(t *testing.T) {
 	if len(plans) != 2 {
 		t.Fatalf("got %d plans, want 2", len(plans))
 	}
-	if plans[0].Service != "api" || plans[1].Service != "user-web" {
-		t.Errorf("plans = %s/%s, want them in the order named", plans[0].Service, plans[1].Service)
+	if plans[0].Name != "api" || plans[1].Name != "user-web" {
+		t.Errorf("plans = %s/%s, want them in the order named", plans[0].Name, plans[1].Name)
 	}
 
 	// Naming one twice is a slip, not a request for two builds.
@@ -225,7 +234,7 @@ func TestResolveAllWithNamesIsRefused(t *testing.T) {
 	o := opts("api")
 	o.All = true
 	if _, err := Resolve(cat, o); err == nil {
-		t.Fatal("want an error when --all is combined with a service name")
+		t.Fatal("want an error when --all is combined with an image name")
 	}
 }
 
@@ -233,7 +242,7 @@ func TestResolveLabelTagsVerbatim(t *testing.T) {
 	cat := fixture(t, threeServices, "a/Dockerfile", "b/Dockerfile", "c/Dockerfile")
 
 	o := opts("api")
-	o.Label = "jjc2.2026_010.001"
+	o.Tag = "jjc2.2026_010.001"
 	plans, err := Resolve(cat, o)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -254,7 +263,7 @@ func TestResolveWithoutGitOrLabelRefuses(t *testing.T) {
 
 	// A label is enough on its own, though.
 	o := opts("api")
-	o.Label = "manual.001"
+	o.Tag = "manual.001"
 	if _, err := Resolve(cat, o); err != nil {
 		t.Errorf("a label should be sufficient without git: %v", err)
 	}
@@ -286,7 +295,7 @@ func TestOCILabels(t *testing.T) {
 	}
 
 	o := opts("api")
-	o.Label = "rel.001"
+	o.Tag = "rel.001"
 	plans, _ = Resolve(cat, o)
 	if !strings.Contains(strings.Join(plans[0].Labels, " "), "org.opencontainers.image.version=rel.001") {
 		t.Errorf("labels = %v, want the version label for a labelled build", plans[0].Labels)
@@ -310,7 +319,7 @@ func TestResolveHandsTheTagToTheBuild(t *testing.T) {
 	// It follows the tag, so a labelled build reports the label rather than the
 	// commit — the same string the image is tagged with, whichever it is.
 	o := opts("api")
-	o.Label = "rel.001"
+	o.Tag = "rel.001"
 	plans, err = Resolve(cat, o)
 	if err != nil {
 		t.Fatal(err)
@@ -323,41 +332,59 @@ func TestResolveHandsTheTagToTheBuild(t *testing.T) {
 	}
 }
 
-// A local build targets the machine doing the building, whatever the config
-// says — an image for another architecture cannot be run here.
-func TestLocalBuildIgnoresServicePlatform(t *testing.T) {
+// A --no-push build targets the platform the config declares, not the host's.
+//
+// It is a diagnostic, and it is only worth running if it builds the thing a
+// push would have sent. The cost is that on an x86 host the resulting arm64
+// image will not run locally without emulation, which is accepted: --no-push
+// answers "does this build", not "give me something to run".
+func TestNoPushBuildStillTargetsTheConfiguredPlatform(t *testing.T) {
 	cat := fixture(t, `
 [project]
 name = "jjc2"
 platform = "linux/arm64"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "jjc2-api"
+container = "api"
 dockerfile = "a/Dockerfile"
-`, "a/Dockerfile")
 
-	o := opts("api")
-	o.Platform = "linux/amd64" // what the host is
+[[builds]]
+name = "legacy"
+repository = "jjc2-legacy"
+container = "legacy"
+dockerfile = "b/Dockerfile"
+platform = "linux/amd64"
+`, "a/Dockerfile", "b/Dockerfile")
+
+	o := opts("api", "legacy")
+	o.Platform = "linux/arm64" // the config's, which is what the caller passes now
+	o.Output = OutputLoad
 	plans, err := Resolve(cat, o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plans[0].Platform != "linux/amd64" {
-		t.Errorf("Platform = %q, want the host's for a --load build", plans[0].Platform)
+	if plans[0].Platform != "linux/arm64" {
+		t.Errorf("api platform = %q, want the project's even with --no-push", plans[0].Platform)
+	}
+	// A build's own override still wins, exactly as it does on the push path.
+	if plans[1].Platform != "linux/amd64" {
+		t.Errorf("legacy platform = %q, want its own override even with --no-push", plans[1].Platform)
 	}
 }
 
-func TestValidateLabel(t *testing.T) {
+func TestValidateTag(t *testing.T) {
 	valid := []string{"", "jjc2.2026_010.001", "ENJJC-12.001", "v1", "a", strings.Repeat("x", 128)}
-	for _, l := range valid {
-		if err := ValidateLabel(l); err != nil {
-			t.Errorf("ValidateLabel(%q) = %v, want nil", l, err)
+	for _, tag := range valid {
+		if err := ValidateTag(tag); err != nil {
+			t.Errorf("ValidateTag(%q) = %v, want nil", tag, err)
 		}
 	}
 
 	invalid := []struct {
-		label string
-		why   string
+		tag string
+		why string
 	}{
 		{"-leading-hyphen", "must start with a letter or digit"},
 		{".leading-dot", "must start with a letter or digit"},
@@ -368,8 +395,8 @@ func TestValidateLabel(t *testing.T) {
 		{"sha-anything", "the reserved commit-tag prefix"},
 	}
 	for _, tc := range invalid {
-		if err := ValidateLabel(tc.label); err == nil {
-			t.Errorf("ValidateLabel(%q) = nil, want an error (%s)", tc.label, tc.why)
+		if err := ValidateTag(tc.tag); err == nil {
+			t.Errorf("ValidateTag(%q) = nil, want an error (%s)", tc.tag, tc.why)
 		}
 	}
 }
@@ -378,7 +405,7 @@ func TestValidateLabel(t *testing.T) {
 // be swept by the registry's keep-last-N-commit-images lifecycle rule, taking
 // away an image a live task definition still points at.
 func TestReservedPrefixErrorExplainsItself(t *testing.T) {
-	err := ValidateLabel("sha-deadbee")
+	err := ValidateTag("sha-deadbee")
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -418,8 +445,10 @@ func TestPushUsesConfiguredPlatform(t *testing.T) {
 name = "jjc2"
 platform = "linux/arm64"
 
-[[services]]
+[[builds]]
 name = "api"
+repository = "jjc2-api"
+container = "api"
 dockerfile = "a/Dockerfile"
 `, "a/Dockerfile")
 
